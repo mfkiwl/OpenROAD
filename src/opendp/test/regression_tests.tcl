@@ -16,11 +16,13 @@ record_tests {
   fillers3
   fillers4
   fillers5
+  fillers6
   fragmented_row01
   fragmented_row02
   fragmented_row03
   fragmented_row04
   mirror1
+  mirror2
   multi_height01
   multi_height02
   multi_height03

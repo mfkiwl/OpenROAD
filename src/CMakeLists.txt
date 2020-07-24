@@ -30,6 +30,7 @@ set(OPENRCX_HOME ${OPENROAD_HOME}/src/OpenRCX)
 set(MPLACE_HOME ${PROJECT_SOURCE_DIR}/src/TritonMacroPlace)
 set(OPENPHYSYN_HOME ${PROJECT_SOURCE_DIR}/src/OpenPhySyn)
 set(PDNSIM_HOME ${PROJECT_SOURCE_DIR}/src/PDNSim)
+set(ANTENNACHECKER_HOME ${PROJECT_SOURCE_DIR}/src/antennachecker)
 
 set(OPENROAD_TCL_INIT ${CMAKE_CURRENT_BINARY_DIR}/OpenRoadTclInitVar.cc)
 
@@ -74,6 +75,11 @@ find_library(TCL_READLINE_LIBRARY
   )
 if (TCL_READLINE_LIBRARY)
   message(STATUS "TCL readline library: ${TCL_READLINE_LIBRARY}")
+endif()
+
+find_path(TCL_READLINE_H tclreadline.h)
+if (TCL_READLINE_H)
+  message(STATUS "TCL readline header: ${TCL_READLINE_H}")
 endif()
 
 find_package(SWIG REQUIRED 3.0)
@@ -220,6 +226,7 @@ add_subdirectory(tapcell)
 add_subdirectory(TritonMacroPlace)
 add_subdirectory(OpenRCX)
 add_subdirectory(PDNSim)
+add_subdirectory(antennachecker)
 
 if(BUILD_OPENPHYSYN)
   add_subdirectory(OpenPhySyn)
@@ -255,6 +262,7 @@ target_include_directories(openroad
   ${TAPCELL_HOME}/include
   ${OPENRCX_HOME}/include
   ${PDNSIM_HOME}/include
+  ${ANTENNACHECKER_HOME}/include
   ${TCL_INCLUDE_PATH}
   ${Boost_INCLUDE_DIRS}
   )
@@ -285,6 +293,7 @@ target_link_libraries(openroad
   defout
   lefin
   lefout
+  antennachecker
   zutil
   ${TCL_LIBRARY}
 )
@@ -294,9 +303,13 @@ if (BUILD_OPENPHYSYN)
 endif()
 
 # tclReadline
-if (TCL_READLINE_LIBRARY)
-  add_definitions(-DENABLE_READLINE)
+if (TCL_READLINE_LIBRARY AND TCL_READLINE_H)
+  target_compile_definitions(openroad PRIVATE ENABLE_READLINE)
   target_link_libraries(openroad ${TCL_READLINE_LIBRARY})
+  target_include_directories(openroad PRIVATE ${TCL_READLINE_H})
+  message(STATUS "TCL readline enabled")
+else()
+  message(STATUS "TCL readline disabled")
 endif()
 
 if (ZLIB_FOUND)

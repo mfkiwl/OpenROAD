@@ -3,7 +3,7 @@ LABEL maintainer="Abdelrahman Hosny <abdelrahman_hosny@brown.edu>"
 
 # Install dev and runtime dependencies
 RUN yum group install -y "Development Tools" \
-    && yum install -y https://centos7.iuscommunity.org/ius-release.rpm \
+    && yum install -y https://repo.ius.io/ius-release-el7.rpm \
     && yum install -y centos-release-scl \
     && yum install -y wget devtoolset-8 \
     devtoolset-8-libatomic-devel tcl-devel tcl tk libstdc++ tk-devel pcre-devel \
@@ -28,8 +28,8 @@ RUN wget https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm 
     yum install -y epel-release-latest-7.noarch.rpm && rm -rf epel-release-latest-7.noarch.rpm  \
     && yum clean -y all
 
-# Install git from epel
-RUN yum -y remove git && yum install -y git2u
+# Install any git version > 2.6.5
+RUN yum remove -y git* && yum install -y git224
 
 # Install SWIG
 RUN yum remove -y swig \
@@ -65,6 +65,11 @@ RUN wget http://lemon.cs.elte.hu/pub/sources/lemon-1.3.1.tar.gz \
     && cmake --build build -j $(nproc) --target install
 
 RUN useradd -ms /bin/bash openroad
+
+# Coverage
+FROM base-dependencies AS coverage
+
+RUN yum install -y http://downloads.sourceforge.net/ltp/lcov-1.14-1.noarch.rpm
 
 FROM base-dependencies AS builder
 

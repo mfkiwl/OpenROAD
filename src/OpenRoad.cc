@@ -65,6 +65,7 @@
 #include "tapcell/MakeTapcell.h"
 #include "OpenRCX/MakeOpenRCX.h"
 #include "pdnsim/MakePDNSim.hh"
+#include "antennachecker/MakeAntennaChecker.hh"
 #ifdef BUILD_OPENPHYSYN
   #include "OpenPhySyn/MakeOpenPhySyn.hpp"
 #endif
@@ -157,6 +158,7 @@ OpenRoad::init(Tcl_Interp *tcl_interp)
   extractor_ = makeOpenRCX();
   replace_ = makeReplace();
   pdnsim_ = makePDNSim();
+  antennaChecker_ = makeAntennaChecker();
 #ifdef BUILD_OPENPHYSYN
   psn_ = makePsn();
 #endif
@@ -181,6 +183,7 @@ OpenRoad::init(Tcl_Interp *tcl_interp)
   initTritonMp(this);
   initOpenRCX(this);
   initPDNSim(this);
+  initAntennaChecker(this);
 #ifdef BUILD_OPENPHYSYN
     initPsn(this);
 #endif
@@ -235,8 +238,10 @@ OpenRoad::readDef(const char *filename,
     dbBlock* block = chip->getBlock();
     if (order_wires) {
       odb::orderWires(block,
-		      nullptr /* net_name_or_id*/,
-		      false /* force */);
+                      nullptr /* net_name_or_id*/,
+                      false /* force */,
+                      false /* verbose */,
+                      true /* quiet */);
     }
 
     for (Observer* observer : observers_) {
@@ -321,9 +326,10 @@ OpenRoad::linkDesign(const char *design_name)
 
 void
 OpenRoad::writeVerilog(const char *filename,
-		       bool sort)
+		       bool sort,
+		       std::vector<sta::LibertyCell*> *remove_cells)
 {
-  sta::writeVerilog(filename, sort, sta_->network());
+  sta::writeVerilog(filename, sort, remove_cells, sta_->network());
 }
 
 bool
@@ -379,6 +385,15 @@ closestPtInRect(Rect rect,
 {
   return Point(min(max(pt.getX(), rect.xMin()), rect.xMax()),
                min(max(pt.getY(), rect.yMin()), rect.yMax()));
+}
+
+Point
+closestPtInRect(Rect rect,
+		int x,
+		int y)
+{
+  return Point(min(max(x, rect.xMin()), rect.xMax()),
+               min(max(y, rect.yMin()), rect.yMax()));
 }
 
 } // namespace

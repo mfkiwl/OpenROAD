@@ -166,7 +166,7 @@ namespace eval ICeWall {
     variable bondpad_height
     variable library
     variable footprint
-    
+
     set side_name [get_side_name $padcell]
     if {$side_name == "none"} {
       set inst [dict get $footprint place $padcell]
@@ -177,7 +177,7 @@ namespace eval ICeWall {
       set cell_type [dict get $library types [get_padcell_type $padcell]]
       set orient [get_padcell_orient $padcell]
     }
-
+    
     if {[dict exists $library cells $cell_type]} {
       set cell_name [dict get $library cells $cell_type cell_name $side_name]
     } else {
@@ -199,8 +199,8 @@ namespace eval ICeWall {
     } elseif {[dict exists $inst cell origin]} {
       # Ensure that we're working with database units
       set origin [list \
-        set x [expr round([dict get $inst cell origin x] * $def_units)]
-        set y [expr round[[dict get $inst cell origin y] * $def_units)]
+        x [expr round([dict get $inst cell origin x] * $def_units)] \
+        y [expr round([dict get $inst cell origin y] * $def_units)] \
       ]
 
       dict set inst cell scaled_origin $origin
@@ -221,15 +221,15 @@ namespace eval ICeWall {
         dict set inst bondpad scaled_centre $centre
       } elseif {[dict exists $inst bondpad origin]} {
         set origin [list \
-          set x [expr round([dict get $inst bondpad origin x] * $def_units)] \
-          set y [expr round[[dict get $inst bondpad origin y] * $def_units)] \
+          x [expr round([dict get $inst bondpad origin x] * $def_units)] \
+          y [expr round[[dict get $inst bondpad origin y] * $def_units)] \
         ]
         
         dict set inst bondpad scaled_origin $origin
         dict set inst bondpad scaled_origin [get_centre $origin $bondpad_width $bondpad_height [get_padcell_orient $padcell bondpad]]
       }
     }
-    
+
     return $inst
   }
   
@@ -242,7 +242,6 @@ namespace eval ICeWall {
     variable bondpad_height
 
     set units [$block getDefUnits]
-
     if {[dict exists $library types bondpad]} {
       set bondpad_cell [get_cell "bondpad" "top"]
       set bondpad_width [$bondpad_cell getWidth]
@@ -363,8 +362,11 @@ namespace eval ICeWall {
   
   proc get_padcell_inst_name {padcell} {
     variable footprint
-    
-    set info [dict get $footprint padcell $padcell]
+
+    if {[is_power_net [get_assigned_name $padcell]] || [is_ground_net [get_assigned_name $padcell]]} {
+      return "u_$padcell"
+    }
+    set info [dict get $footprint padcells [get_side_name $padcell] $padcell]
     if {[dict exists $info pad_inst_name]} {
       return [format [dict get $info pad_inst_name] [get_name $padcell $info]]
     }
@@ -383,7 +385,7 @@ namespace eval ICeWall {
     if {[dict exists $info pad_pin_name]} {
       return [format [dict get $info pad_pin_name] [get_name $padcell $info]]
     }
-    
+
     if {[dict exists $footprint pad_pin_name]} {
       return [format [dict get $footprint pad_pin_name] [get_name $padcell $info]]
     }
@@ -391,6 +393,13 @@ namespace eval ICeWall {
     return "u_[get_name $padcell $info]"
   }
   
+  proc get_assigned_name {padcell} {
+    variable footprint 
+
+    set info [dict get $footprint padcells [get_side_name $padcell] $padcell]
+    return "[get_name $padcell $info]"
+  }
+
   proc get_name {padcell info} {
     if {[dict exists $info name]} {
       return [dict get $info name]
@@ -814,6 +823,30 @@ namespace eval ICeWall {
     }
   }
 
+  proc is_power_net {net_name} {
+    variable footprint
+
+    if {[dict exists $footprint power_nets]} {
+      if {[lsearch [dict get $footprint power_nets] $net_name] > -1} {
+        return 1
+      }
+    } 
+
+    return 0
+  } 
+
+  proc is_ground_net {net_name} {
+    variable footprint
+
+    if {[dict exists $footprint ground_nets]} {
+      if {[lsearch [dict get $footprint ground_nets] $net_name] > -1} {
+        return 1
+      }
+    } 
+
+    return 0
+  }
+
   proc place_padring {} {
     variable block
     variable tech
@@ -845,9 +878,6 @@ namespace eval ICeWall {
           set fill_end   [expr $edge_bottom_offset + $corner_width]
         }
 
-      # debug "$side_name: fill_start = $fill_start"
-      # debug "$side_name: fill_end   = $fill_end"
-
       foreach padcell [dict get $footprint padcells order $side_name] {
         set name [get_padcell_inst_name $padcell]
         set type [get_padcell_type $padcell]
@@ -863,7 +893,7 @@ namespace eval ICeWall {
 
         set x [dict get $footprint padcells $side_name $padcell cell scaled_origin x]
         set y [dict get $footprint padcells $side_name $padcell cell scaled_origin y]
-        
+
         $inst setOrigin $x $y
         $inst setOrient [get_padcell_orient $padcell]
         $inst setPlacementStatus "FIRM"

@@ -52,6 +52,37 @@ sta_to_db_inst(Instance *inst)
   return db_network->staToDb(inst);
 }
 
+odb::dbBTerm *
+sta_to_db_port(Port *port)
+{
+  ord::OpenRoad *openroad = ord::getOpenRoad();
+  sta::dbNetwork *db_network = openroad->getDbNetwork();
+  Pin *pin = db_network->findPin(db_network->topInstance(), port);
+  dbITerm *iterm;
+  dbBTerm *bterm;
+  db_network->staToDb(pin, iterm, bterm);
+  return bterm;
+}
+
+odb::dbITerm *
+sta_to_db_pin(Pin *pin)
+{
+  ord::OpenRoad *openroad = ord::getOpenRoad();
+  sta::dbNetwork *db_network = openroad->getDbNetwork();
+  dbITerm *iterm;
+  dbBTerm *bterm;
+  db_network->staToDb(pin, iterm, bterm);
+  return iterm;
+}
+
+odb::dbNet *
+sta_to_db_net(Net *net)
+{
+  ord::OpenRoad *openroad = ord::getOpenRoad();
+  sta::dbNetwork *db_network = openroad->getDbNetwork();
+  return db_network->staToDb(net);
+}
+
 odb::dbMaster *
 sta_to_db_master(LibertyCell *cell)
 {

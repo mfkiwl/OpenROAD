@@ -1,17 +1,8 @@
-////////////////////////////////////////////////////////////////////////////////////
-// Authors: Mateus Fogaca
-//          (Ph.D. advisor: Ricardo Reis)
-//          Jiajia Li
-//          Andrew Kahng
-// Based on:
-//          K. Han, A. B. Kahng and J. Li, "Optimal Generalized H-Tree Topology and 
-//          Buffering for High-Performance and Low-Power Clock Distribution", 
-//          IEEE Trans. on CAD (2018), doi:10.1109/TCAD.2018.2889756.
-//
+/////////////////////////////////////////////////////////////////////////////
 //
 // BSD 3-Clause License
 //
-// Copyright (c) 2018, The Regents of the University of California
+// Copyright (c) 2019, University of California, San Diego.
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -30,17 +21,21 @@
 //
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
 // AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-////////////////////////////////////////////////////////////////////////////////////
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+// POSSIBILITY OF SUCH DAMAGE.
+//
+///////////////////////////////////////////////////////////////////////////////
+
 
 #include "TechChar.h"
+#include "openroad/Error.hh"
 
 #include "sta/Sdc.hh"
 #include "sta/Liberty.hh"
@@ -58,6 +53,8 @@
 #include <algorithm>
 
 namespace TritonCTS {
+
+using ord::error;
 
 void TechChar::compileLut(std::vector<TechChar::ResultData> lutSols) {
         std::cout << " Compiling LUT\n";
@@ -128,26 +125,22 @@ void TechChar::parseLut(const std::string& file) {
         std::ifstream lutFile(file.c_str());
         
         if (!lutFile.is_open()) {
-                std::cout << "    [ERROR] Could not find LUT file. Exiting...\n";
-                std::exit(1);
+                error("Could not find LUT file.\n");
         }
 
         // First line of the LUT is a header with normalization values
         if (!(lutFile >> _minSegmentLength >> _maxSegmentLength >> _minCapacitance 
                       >> _maxCapacitance >> _minSlew >> _maxSlew)) {
-                std::cout << "    [ERROR] Problem reading the LUT file\n";     
-                std::exit(1);            
+                error("Problem reading the LUT file.\n");
         }
         
         if (_options->getWireSegmentUnit() == 0){
                 unsigned presetWireUnit = 0;
                 if (!(lutFile >> presetWireUnit)) {
-                        std::cout << "    [ERROR] Problem reading the LUT file\n"; 
-                        std::exit(1);            
+                        error("Problem reading the LUT file.\n");
                 }
                 if (presetWireUnit == 0) {
-                        std::cout << "    [ERROR] Problem reading the LUT file\n";
-                        std::exit(1);   
+                        error("Problem reading the LUT file.\n");
                 }
                 _options->setWireSegmentUnit(presetWireUnit);
                 setLenghthUnit(static_cast<unsigned> (presetWireUnit)/2);
@@ -237,11 +230,10 @@ void TechChar::checkCharacterizationBounds() const {
         if (_minSegmentLength > MAX_NORMALIZED_VAL || _maxSegmentLength > MAX_NORMALIZED_VAL ||
             _minCapacitance > MAX_NORMALIZED_VAL || _maxCapacitance > MAX_NORMALIZED_VAL ||
             _minSlew > MAX_NORMALIZED_VAL || _maxSlew > MAX_NORMALIZED_VAL) {
-               std::cout << "    [ERROR] Normalized values in the LUT should be in the range ";
-               std::cout << "[1, " << MAX_NORMALIZED_VAL << "]\n";
-               std::cout << "    Check the table above to see the normalization ranges and check ";
-               std::cout << "your characterization configuration.\n";
-               std::exit(1);
+               error(("Normalized values in the LUT should be in the range [1, " +
+                      std::to_string(MAX_NORMALIZED_VAL) + "\n Check the table " +
+                      "above to see the normalization ranges and check " +
+                      "your characterization configuration.\n").c_str());
         } 
 }
 
@@ -268,6 +260,10 @@ void TechChar::parseSolList(const std::string& file) {
         std::cout << " Reading solution list file \"" << file << "\"\n";
         std::ifstream solFile(file.c_str());
 
+        if (!solFile.is_open()) {
+                error("Could not find sol_list file.\n");
+        }
+
         unsigned solIdx = 0;
         std::string line;
         
@@ -284,10 +280,8 @@ void TechChar::parseSolList(const std::string& file) {
                 
                 // Sanity check
                 if (_wireSegments[solIdx].getNumBuffers() != numBuffers) {
-                        std::cout << "    [ERROR] Number of buffers does not match on solution " 
-                                  << solIdx << "\n";
-                        std::cout << numBuffers << "\n";
-                        std::exit(1);
+                        error(("Number of buffers does not match on solution.\n" +
+                               std::to_string(solIdx) + " " + std::to_string(numBuffers) + ".\n").c_str());
                 }
                ++solIdx; 
         }
@@ -520,29 +514,24 @@ void TechChar::initCharacterization() {
         ord::OpenRoad* openRoad = ord::OpenRoad::openRoad();
         _dbNetworkChar = openRoad->getDbNetwork();
         if (_dbNetworkChar == nullptr){
-                std::cout << "Network not found! Check your lef/def/verilog file.\n";
-                std::exit(1);
+                error("Network not found. Check your lef/def/verilog file.\n");
         }
         _db = odb::dbDatabase::getDatabase(_options->getDbId());
         if (_db == nullptr){
-                std::cout << "Database not found! Check your lef/def/verilog file.\n";
-                std::exit(1);
+                error("Database not found. Check your lef/def/verilog file.\n");
         }
         odb::dbChip* chip  = _db->getChip();
         if (chip == nullptr){
-                std::cout << "Chip not found! Check your lef/def/verilog file.\n";
-                std::exit(1);
+                error("Chip not found. Check your lef/def/verilog file.\n");
         }
         odb::dbBlock* block = chip->getBlock();
         if (block == nullptr){
-                std::cout << "Block not found! Check your lef/def/verilog file.\n";
-                std::exit(1);
+                error("Block not found. Check your lef/def/verilog file.\n");
         }
         _openSta = openRoad->getSta();
         sta::Network* networkChar = _openSta->network();
         if (networkChar == nullptr){
-                std::cout << "Network not found! Check your lef/def/verilog file.\n";
-                std::exit(1);
+                error("Network not found. Check your lef/def/verilog file.\n");
         }
         float dbUnitsPerMicron = static_cast<float> (block->getDbUnitsPerMicron());
 
@@ -563,15 +552,13 @@ void TechChar::initCharacterization() {
         //Gets the buffer masters and its in/out pins.
         std::vector<std::string> masterVector = _options->getBufferList();
         if (masterVector.size() < 1){
-                std::cout << "Buffer not found! Check your -buf_list input.\n";
-                std::exit(1);
+                error("Buffer not found. Check your -buf_list input.\n");
         }
         odb::dbMaster* testBuf = nullptr;
         for (std::string masterString : masterVector) {
                 testBuf = _db->findMaster(masterString.c_str());
                 if (testBuf == NULL){
-                        std::cout << "Buffer not found! Check your -buf_list input.\n";
-                        std::exit(1);
+                        error("Buffer not found. Check your -buf_list input.\n");
                 }
                 _masterNames.insert(masterString);
         }
@@ -616,8 +603,7 @@ void TechChar::initCharacterization() {
         }
 
         if (_wirelengthsToTest.size() < 1) {
-                std::cout << "Error generating the wirelenghts to test. Check your -wire_unit parameter or technology files.\n";
-                std::exit(1);
+                error("Error generating the wirelengths to test. Check your -wire_unit parameter or technology files.\n");
         }
 
         setLenghthUnit(static_cast<unsigned> ( ((_charBuf->getHeight() * 10)/2) / dbUnitsPerMicron));
@@ -627,14 +613,18 @@ void TechChar::initCharacterization() {
         float maxCap = 0.0;
         if ( _options->getMaxCharSlew() == 0 || _options->getMaxCharCap() == 0 ){
                 sta::Cell* masterCell = _dbNetworkChar->dbToSta(_charBuf);
-                sta::LibertyLibrary* staLib = networkChar->libertyLibrary(masterCell);
+                sta::LibertyCell* libertyCell = networkChar->libertyCell(masterCell);
+                if (!libertyCell) {
+                        error("No Liberty cell found for %s.\n", bufMasterName.c_str());
+                }
+
+                sta::LibertyLibrary* staLib = libertyCell->libertyLibrary();
                 bool maxSlewExist = false;
                 bool maxCapExist = false;
                 staLib->defaultMaxSlew(maxSlew, maxSlewExist);
                 staLib->defaultMaxCapacitance(maxCap, maxCapExist);
                 if ( !maxSlewExist || !maxCapExist ){
-                        std::cout << "Liberty Library does not have Max Slew or Max Cap values.\n";
-                        std::exit(1);
+                        error("Liberty Library does not have Max Slew or Max Cap values.\n");
                 } else {
                         _charMaxSlew = maxSlew;
                         _charMaxCap = maxCap;
@@ -659,8 +649,7 @@ void TechChar::initCharacterization() {
         }
 
         if ((_loadsToTest.size() < 1) || (_slewsToTest.size() < 1)) {
-                std::cout << "Error generating the wirelenghts to test. Check your -max_cap / -max_slew / -cap_inter / -slew_inter parameter or technology files.\n";
-                std::exit(1);
+                error("Error generating the wirelengths to test. Check your -max_cap / -max_slew / -cap_inter / -slew_inter parameter or technology files.\n");
         }
 }
 

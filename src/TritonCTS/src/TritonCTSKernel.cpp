@@ -1,17 +1,8 @@
-////////////////////////////////////////////////////////////////////////////////////
-// Authors: Mateus Fogaca
-//          (Ph.D. advisor: Ricardo Reis)
-//          Jiajia Li
-//          Andrew Kahng
-// Based on:
-//          K. Han, A. B. Kahng and J. Li, "Optimal Generalized H-Tree Topology and 
-//          Buffering for High-Performance and Low-Power Clock Distribution", 
-//          IEEE Trans. on CAD (2018), doi:10.1109/TCAD.2018.2889756.
-//
+/////////////////////////////////////////////////////////////////////////////
 //
 // BSD 3-Clause License
 //
-// Copyright (c) 2018, The Regents of the University of California
+// Copyright (c) 2019, University of California, San Diego.
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -30,18 +21,22 @@
 //
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
 // AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-////////////////////////////////////////////////////////////////////////////////////
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+// POSSIBILITY OF SUCH DAMAGE.
+//
+///////////////////////////////////////////////////////////////////////////////
+
 
 #include "TritonCTSKernel.h"
 #include "PostCtsOpt.h"
+#include "openroad/Error.hh"
 
 #include <fstream>
 #include <unordered_set>
@@ -50,14 +45,17 @@
 
 namespace TritonCTS {
 
+using ord::error;
+
 void TritonCTSKernel::runTritonCts() {
         printHeader();
         setupCharacterization();
         findClockRoots();
         populateTritonCts();
         checkCharacterization();
+        if (_options.getOnlyCharacterization()){return;}
         buildClockTrees();
-        runPostCtsOpt();
+        if (_options.runPostCtsOpt()){runPostCtsOpt();}
         writeDataToDb();
         printFooter();
 }
@@ -69,15 +67,18 @@ void TritonCTSKernel::printHeader() const {
 }
 
 void TritonCTSKernel::setupCharacterization() {
-        std::ifstream lutFile(_options.getLutFile().c_str());
-        std::ifstream solFile(_options.getSolListFile().c_str());
-        if (!lutFile.is_open() || !solFile.is_open()) {
-                //LUT files doesn't exist. So a new characteriztion is created.
+        if (_options.runAutoLut()) {
+                //A new characteriztion is created.
                 createCharacterization();
         } else {
                 //LUT files exists. Import the characterization results.
                 importCharacterization();
         }
+        //Also resets metrics everytime the setup is done
+        _options.setNumSinks(0);
+        _options.setNumBuffersInserted(0);
+        _options.setNumClockRoots(0);
+        _options.setNumClockSubnets(0);
 }
 
 void TritonCTSKernel::importCharacterization() {
@@ -112,20 +113,13 @@ void TritonCTSKernel::checkCharacterization() {
                         if (_dbWrapper.masterExists(master)) {
                                 visitedMasters.insert(master);
                         } else {
-                                std::cout << "    [ERROR] Buffer " << master 
-                                          << " is not in the loaded DB.\n";
-                                std::exit(1);
+                                error(("Buffer " + master + " is not in the loaded DB.\n").c_str());
                         }           
                 }
         });
 
         std::cout << "    The chacterization used " << visitedMasters.size() << " buffer(s) types."
                   << " All of them are in the loaded DB.\n";
-        
-        
-        if (_options.getOnlyCharacterization() == true){
-                std::exit(1);
-        }
 }
 
 void TritonCTSKernel::findClockRoots() {
@@ -151,8 +145,7 @@ void TritonCTSKernel::populateTritonCts() {
         _dbWrapper.populateTritonCTS();
 
         if (_builders.size() < 1) {
-                std::cout << "    [ERROR] No valid clock nets in the design. Exiting...\n";
-                std::exit(0);
+                error("No valid clock nets in the design.\n");
         }
 }
 
@@ -200,6 +193,32 @@ void TritonCTSKernel::forEachBuilder(const std::function<void(const TreeBuilder*
 
 void TritonCTSKernel::printFooter() const {
         std::cout << " ... End of TritonCTS execution.\n";
+}
+
+void TritonCTSKernel::reportCtsMetrics() {
+        std::string filename = _options.getMetricsFile();
+
+        if (filename != ""){
+
+                std::ofstream file(filename.c_str());
+
+                if(!file.is_open()) {
+                        std::cout << "Could not open output metric file.\n";
+                        return;
+                }
+
+                file << "[TritonCTS Metrics] Total number of Clock Roots: " << _options.getNumClockRoots() << ".\n";
+                file << "[TritonCTS Metrics] Total number of Buffers Inserted: " << _options.getNumBuffersInserted() << ".\n";
+                file << "[TritonCTS Metrics] Total number of Clock Subnets: " << _options.getNumClockSubnets() << ".\n";
+                file << "[TritonCTS Metrics] Total number of Sinks: " << _options.getNumSinks() << ".\n";
+                
+                file.close();
+        } else {
+                std::cout << "[TritonCTS Metrics] Total number of Clock Roots: " << _options.getNumClockRoots() << ".\n";
+                std::cout << "[TritonCTS Metrics] Total number of Buffers Inserted: " << _options.getNumBuffersInserted() << ".\n";
+                std::cout << "[TritonCTS Metrics] Total number of Clock Subnets: " << _options.getNumClockSubnets() << ".\n";
+                std::cout << "[TritonCTS Metrics] Total number of Sinks: " << _options.getNumSinks() << ".\n";
+        }
 }
 
 }
