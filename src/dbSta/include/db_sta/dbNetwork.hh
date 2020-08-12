@@ -14,11 +14,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-#ifndef STA_DB_NETWORK_H
-#define STA_DB_NETWORK_H
+#pragma once
 
-#include "ConcreteNetwork.hh"
-#include "GraphClass.hh"
+#include "sta/ConcreteNetwork.hh"
+#include "sta/GraphClass.hh"
 #include "opendb/db.h"
 
 namespace sta {
@@ -49,8 +48,8 @@ public:
   virtual void clear();
 
   void readLefAfter(dbLib *lib);
-  void readDefAfter();
-  void readDbAfter();
+  void readDefAfter(dbBlock* block);
+  void readDbAfter(dbDatabase* db);
   void readLibertyAfter(LibertyLibrary *lib);
 
   virtual bool linkNetwork(const char *top_cell_name,
@@ -111,6 +110,7 @@ public:
   virtual bool isGround(const Net *net) const;
   virtual NetPinIterator *pinIterator(const Net *net) const;
   virtual NetTermIterator *termIterator(const Net *net) const;
+  virtual Net *highestConnectedNet(Net *net) const;
 
   virtual ConstantPinIterator *constantPinIterator();
 
@@ -155,6 +155,7 @@ public:
 	       dbBTerm *&bterm) const;
   dbBTerm *staToDb(const Term *term) const;
   dbMaster *staToDb(const Cell *cell) const;
+  dbMaster *staToDb(const LibertyCell *cell) const;
   dbMTerm *staToDb(const Port *port) const;
   void staToDb(PortDirection *dir,
 	       // Return values.
@@ -200,4 +201,4 @@ protected:
 };
 
 } // namespace
-#endif
+

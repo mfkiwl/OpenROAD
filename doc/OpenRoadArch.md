@@ -13,15 +13,16 @@ minimizes the overhead of invoking each tool in the flow.
 
 ### Tool File Organization
 
-Every tool follows the following file structure.
+Every tool follows the following file structure, grouping sources,
+tests and headers together.
 
 ```
-CMakelists.txt - add_subdirectory's src/CMakelists.txt
-src/ - sources and private headers
-src/CMakelists.txt
-include/<toolname>/ - exported headers
-test/
-test/regression
+src/CMakelists.txt - add_subdirectory's src/CMakelists.txt
+src/tool/src/ - sources and private headers
+src/tool/src/CMakelists.txt
+src/tool/include/tool/ - exported headers
+src/tool/test/
+src/tool/test/regression
 ```
 
 OpenROAD repository
@@ -37,27 +38,36 @@ include/openroad/Error.hh - Error reporting API
 
 ```
 
-Submodule repos in /src (note these are NOT in src/module)
+Some tools such as OpenDB are submodules, which are simply
+subdirectories in /src that are pointers to the git submodule.
+They are intentionally not segregated into a separate /module.
 
-```
-OpenDB
-OpenSTA
-replace
-ioPlacer
-FastRoute
-TritonMacroPlace
-OpenRCX
-flute3
-eigen
-```
+The use of submodules for new code integrated into OpenROAD is
+strongly discouraged. Submodules make changes to the underlying
+infrastructure (OpenDB, OpenSTA etc) difficult to propagate across the
+dependent submodule repositories. Submodules: just say no.
 
-Submodules that are shared by multiple tools are owned by OpenROAD
-so that there are not redundant source trees and compiles.
+Where external/third party code that a tool depends on should be
+placed depends on the nature of the dependency.
 
-Each tool submodule cmake file builds a library that is linked by the
-OpenROAD application. The tools should not define a `main()` function.
-If the tool is tcl only and has no c++ code it does not need to have
-a cmake file.
+* Libraries - code packaged as a linkable library.
+Examples are tcl, boost, zlib, eigen, lemon, spdlog.
+
+These should be installed in the build environment and linked by
+OpenRoad. Document these dependencies in the top level README.md
+file. The Dockerfile should be updated to illustrate where to find the
+library and how to install it.  Adding libraries to the build
+enviroment requires coodination with the sys admins for the continuous
+integration hosts to make sure the environments include the
+dependency. Advanced notification should also be given to the
+development team so their private build environments can be updated.
+
+* 
+
+Each tool cmake file builds a library that is linked by the OpenROAD
+application. The tools should not define a `main()` function.  If the
+tool is tcl only and has no c++ code it does not need to have a cmake
+file.
 
 None of the tools have commands to read or write LEF, DEF, Verilog or
 database files.  These functions are all provided by the OpenROAD
@@ -76,12 +86,11 @@ Each tool should use a unique namespace for all of its code.  The same
 namespace should be used for any Tcl commands.  Internal Tcl commands
 stay inside the namespace, user visible Tcl commands will be exported
 to the global namespace. User commands should be simple Tcl commands
-such as 'global_place_design' that do not create tool instances that
-must be based to the commands. Defining Tcl commands for a tool class
-is fine for internals, but not for user visible commands. Commands
-have an implicit argument of the current OpenROAD class
-object. Functions to get individual tools from the OpenROAD object can
-be defined.
+such as 'global_placement' that do not create tool instances that must
+be based to the commands. Defining Tcl commands for a tool class is
+fine for internals, but not for user visible commands. Commands have
+an implicit argument of the current OpenROAD class object. Functions
+to get individual tools from the OpenROAD object can be defined.
 
 ### Initialization (c++ tools only)
 
@@ -153,8 +162,25 @@ thousands of lines of internal tool info.
 Regression scripts should pass the `-no_init` option to openroad so that a
 user's init file is not sourced before the tests runs.
 
-Regression scripts should add output files or directories to `.gitignore` so that running
-does note leave the source repository "dirty".
+Regression scripts should add output files or directories to
+`.gitignore` so that running does note leave the source repository
+"dirty".
+
+The Nangate45 open source library data used by many tests is in
+`test/Nangate45`. Use the following command to add a link in the tool
+command
+
+```
+cd tool/test
+ln -s ../../../test/Nangate45
+```
+
+After the link is installed, the test script can read the liberty file
+with the command shown below.
+
+```
+read_liberty Nangate45/Nangate45_typ.lib
+```
 
 ### Builds
 
@@ -266,32 +292,56 @@ Detailed documentation should be the tool/README.md file.
 
 ### Tool Flow
 
-1. Verilog to DB (dbSTA)
-2. Init Floorplan (OpenROAD)
-3. I/O placement (ioPlacer)
-4. PDN generation (pdngen
-5. Tapcell and Welltie insertion (tapcell with LEF/DEF)
-6. I/O placement (ioPlacer)
-7. Global placement (RePlAce)
-8. Gate Resizing and buffering (Resizer)
-9. Detailed placement (OpenDP)
-10. Clock Tree Synthesis (TritonCTS)
-11. Repair Hold Violations (Resizer)
-12. Global route (FastRoute)
-13. Detailed route (TritonRoute)n
-14. Final timing/power report (OpenSTA)
+* Verilog to DB (dbSTA)
+* Init Floorplan (OpenROAD)
+* I/O placement (ioPlacer)
+* PDN generation (pdngen)
+* Tapcell and Welltie insertion (tapcell)
+* I/O placement (ioPlacer)
+* Macro placement (TritonMacroPlace)
+* Global placement (RePlAce)
+* Gate Resizing and buffering (Resizer)
+* Detailed placement (OpenDP)
+* Clock Tree Synthesis (TritonCTS)
+* Repair Hold Violations (Resizer)
+* Global route (FastRoute)
+* Detailed route (TritonRoute)
+* Final timing/power report (OpenSTA)
 
 ### Tool Checklist
 
-OpenROAD submodules reference tool `openroad` branch head
-No `develop`, `openroad_app`, `openroad_build` branches.
+Tools should make every attempt to minimize external dependencies.
+Linking libraries other than those currently in use complicates the
+builds and sacrifices the portability of OpenROAD. OpenROAD should be
+portable to many different compiler/operating system versions and
+dependencies make this vastly more complicated.
+
+OpenROAD submodules reference tool `openroad` branch head.
+No git `develop`, `openroad_app`, or `openroad_build` branches.
+
+Submodules used by more than one tool belong in /src, not duplicated
+in each tool repo.
+
+CMakeLists.txt does not use
+ add_compile_options
+ include_directories
+ link_directories
+ link_libraries
+Use target_ versions instead.
+See https://gist.github.com/mbinna/c61dbb39bca0e4fb7d1f73b0d66a4fd1
 
 CMakeLists.txt does not use glob.
-https://gist.github.com/mbinna/c61dbb39bca0e4fb7d1f73b0d66a4fd1
+Use explicit lists of source files and headers instead.
+
+CMakeLists.txt does not define CFLAGS 
+ CMAKE_CXX_FLAGS
+ CMAKE_CXX_FLAGS_DEBUG
+ CMAKE_CXX_FLAGS_RELEASE
+Let the top level and defaults control these.
 
 No main.cpp or main procedure.
 
-No compiler warnings for gcc, clang with optimization enabled.
+No compiler warnings for gcc or clang with optimization enabled.
 
 Does not call flute::readLUT (called once by OpenRoad).
 
@@ -308,17 +358,22 @@ Use command arguments or support commands.
 
 No jenkins/, Jenkinsfile, Dockerfile in tool directory.
 
-regression script named "test/regression" with default argument that runs
+regression script named "test/regression" with no arguments that runs
 tests. Not tests/regression-tcl.sh, not test/run_tests.py etc.
 
-Regression runs independent of current directory.
+regression script should run independent of current directory.
+For example, ../test/regression should work.
 
-Regression only prints test results or summary, does not belch 1000s
+regression should only print test results or summary, not belch 1000s
 of lines of output.
 
 Test scripts use OpenROAD tcl commands (not itcl, not internal accessors).
 
-Regressions report no memory errors with valgrind.
+regression script should only write files in a directory that is in
+the tool's .gitignore so the hierarchy does not have modified files in
+it as a result or running the regressions.
+
+Regressions report no memory errors with valgrind (stretch goal).
 
 Regressions report no memory leaks with valgrind (difficult).
 

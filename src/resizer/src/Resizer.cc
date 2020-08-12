@@ -1,44 +1,65 @@
-// Resizer, LEF/DEF gate resizer
-// Copyright (c) 2019, Parallax Software, Inc.
-// 
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-// 
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-// 
-// You should have received a copy of the GNU General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+/////////////////////////////////////////////////////////////////////////////
+//
+// BSD 3-Clause License
+//
+// Copyright (c) 2019, James Cherry, Parallax Software, Inc.
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+// * Redistributions of source code must retain the above copyright notice, this
+//   list of conditions and the following disclaimer.
+//
+// * Redistributions in binary form must reproduce the above copyright notice,
+//   this list of conditions and the following disclaimer in the documentation
+//   and/or other materials provided with the distribution.
+//
+// * Neither the name of the copyright holder nor the names of its
+//   contributors may be used to endorse or promote products derived from
+//   this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+// POSSIBILITY OF SUCH DAMAGE.
+//
+///////////////////////////////////////////////////////////////////////////////
 
-#include "Machine.hh"
-#include "Debug.hh"
-#include "PortDirection.hh"
-#include "TimingRole.hh"
-#include "Units.hh"
-#include "Liberty.hh"
-#include "TimingArc.hh"
-#include "TimingModel.hh"
-#include "Corner.hh"
-#include "DcalcAnalysisPt.hh"
-#include "Graph.hh"
-#include "ArcDelayCalc.hh"
-#include "GraphDelayCalc.hh"
-#include "Parasitics.hh"
-#include "Sdc.hh"
-#include "PathVertex.hh"
-#include "SearchPred.hh"
-#include "Bfs.hh"
-#include "Search.hh"
-#include "Network.hh"
-#include "StaMain.hh"
+#include "resizer/Resizer.hh"
+
+#include "sta/Debug.hh"
+#include "sta/FuncExpr.hh"
+#include "sta/PortDirection.hh"
+#include "sta/TimingRole.hh"
+#include "sta/Units.hh"
+#include "sta/Liberty.hh"
+#include "sta/TimingArc.hh"
+#include "sta/TimingModel.hh"
+#include "sta/Network.hh"
+#include "sta/Graph.hh"
+#include "sta/DcalcAnalysisPt.hh"
+#include "sta/ArcDelayCalc.hh"
+#include "sta/GraphDelayCalc.hh"
+#include "sta/Parasitics.hh"
+#include "sta/Sdc.hh"
+#include "sta/Corner.hh"
+#include "sta/PathVertex.hh"
+#include "sta/SearchPred.hh"
+#include "sta/Bfs.hh"
+#include "sta/Search.hh"
+#include "sta/StaMain.hh"
 #include "openroad/OpenRoad.hh"
 #include "openroad/Error.hh"
 #include "resizer/SteinerTree.hh"
-#include "resizer/Resizer.hh"
+#include "opendb/dbTransform.h"
 
 // Outstanding issues
 //  Instance levelization and resizing to target slew only support single output gates
@@ -61,6 +82,10 @@ using ord::closestPtInRect;
 using odb::dbInst;
 using odb::dbPlacementStatus;
 using odb::Rect;
+using odb::dbOrientType;
+using odb::dbTransform;
+using odb::dbMPin;
+using odb::dbBox;
 
 extern "C" {
 extern int Resizer_Init(Tcl_Interp *interp);
@@ -68,6 +93,7 @@ extern int Resizer_Init(Tcl_Interp *interp);
 
 extern const char *resizer_tcl_inits[];
 
+// Referenced by MakeSteinerTree also.
 bool
 pinIsPlaced(Pin *pin,
 	    const dbNetwork *network);
@@ -272,7 +298,9 @@ Resizer::bufferInputs(LibertyCell *buffer_cell)
     Pin *pin = port_iter->next();
     Net *net = network_->net(network_->term(pin));
     if (network_->direction(pin)->isInput()
-	&& !isClock(net))
+	&& net
+	&& !isClock(net)
+	&& !isSpecial(net))
       bufferInput(pin, buffer_cell);
   }
   delete port_iter;
@@ -290,7 +318,7 @@ Resizer::bufferInput(Pin *top_pin,
   LibertyPort *input, *output;
   buffer_cell->bufferPorts(input, output);
   string buffer_out_net_name = makeUniqueNetName();
-  string buffer_name = makeUniqueBufferName();
+  string buffer_name = makeUniqueInstName("input");
   Instance *parent = db_network_->topInstance();
   Net *buffer_out = db_network_->makeNet(buffer_out_net_name.c_str(), parent);
   Instance *buffer = db_network_->makeInstance(buffer_cell,
@@ -343,7 +371,10 @@ Resizer::bufferOutputs(LibertyCell *buffer_cell)
   InstancePinIterator *port_iter(network_->pinIterator(network_->topInstance()));
   while (port_iter->hasNext()) {
     Pin *pin = port_iter->next();
-    if (network_->direction(pin)->isOutput())
+    Net *net = network_->net(network_->term(pin));
+    if (network_->direction(pin)->isOutput()
+	&& net
+	&& !isSpecial(net))
       bufferOutput(pin, buffer_cell);
   }
   delete port_iter;
@@ -362,7 +393,7 @@ Resizer::bufferOutput(Pin *top_pin,
   LibertyPort *input, *output;
   buffer_cell->bufferPorts(input, output);
   string buffer_in_net_name = makeUniqueNetName();
-  string buffer_name = makeUniqueBufferName();
+  string buffer_name = makeUniqueInstName("output");
   Instance *parent = network->topInstance();
   Net *buffer_in = network->makeNet(buffer_in_net_name.c_str(), parent);
   Instance *buffer = network->makeInstance(buffer_cell,
@@ -432,15 +463,20 @@ Resizer::resizeToTargetSlew(Instance *inst)
     // Only resize single output gates for now.
     if (output) {
       Net *out_net = network->net(output);
-      // Hands off the clock nets.
-      if (!isClock(out_net)) {
+      if (out_net
+	  // Hands off the clock nets.
+	  && !isClock(out_net)
+	  // Exclude tie hi/low cells.
+	  && !isFuncOneZero(output)
+	  // Hands off special nets.
+	  && !isSpecial(out_net)) {
 	// Includes net parasitic capacitance.
 	float load_cap = graph_delay_calc_->loadCap(output, dcalc_ap_);
 	LibertyCell *best_cell = nullptr;
 	float best_ratio = 0.0;
-	auto equiv_cells = sta_->equivCells(cell);
+	LibertyCellSeq *equiv_cells = sta_->equivCells(cell);
 	if (equiv_cells) {
-	  for (auto target_cell : *equiv_cells) {
+	  for (LibertyCell *target_cell : *equiv_cells) {
 	    if (!dontUse(target_cell)) {
 	      float target_load = (*target_load_map_)[target_cell];
 	      float ratio = target_load / load_cap;
@@ -505,14 +541,17 @@ Resizer::area(Cell *cell)
 double
 Resizer::area(dbMaster *master)
 {
+  if (!master->isCoreAutoPlaceable()) {
+    return 0;
+  }
   return dbuToMeters(master->getWidth()) * dbuToMeters(master->getHeight());
 }
 
 // DBUs are nanometers.
 double
-Resizer::dbuToMeters(uint dist) const
+Resizer::dbuToMeters(int dbu) const
 {
-  return dist * 1E-9;
+  return static_cast<double>(dbu) * 1e-6 / db_->getTech()->getLefUnits();
 }
 
 void
@@ -532,7 +571,7 @@ void
 Resizer::setDontUse(LibertyCellSeq *dont_use)
 {
   if (dont_use) {
-    for (auto cell : *dont_use)
+    for (LibertyCell *cell : *dont_use)
       dont_use_.insert(cell);
   }
 }
@@ -555,7 +594,7 @@ Resizer::findTargetLoads(LibertyLibrarySeq *resize_libs)
   findBufferTargetSlews(resize_libs);
   if (target_load_map_ == nullptr)
     target_load_map_ = new CellTargetLoadMap;
-  for (auto lib : *resize_libs)
+  for (LibertyLibrary *lib : *resize_libs)
     findTargetLoads(lib, tgt_slews_);
 }
 
@@ -570,25 +609,25 @@ Resizer::targetLoadCap(LibertyCell *cell)
 
 void
 Resizer::findTargetLoads(LibertyLibrary *library,
-			 Slew slews[])
+			 TgtSlews &slews)
 {
   LibertyCellIterator cell_iter(library);
   while (cell_iter.hasNext()) {
-    auto cell = cell_iter.next();
+    LibertyCell *cell = cell_iter.next();
     findTargetLoad(cell, slews);
   }
 }
 
 void
 Resizer::findTargetLoad(LibertyCell *cell,
-			Slew slews[])
+			TgtSlews &slews)
 {
   LibertyCellTimingArcSetIterator arc_set_iter(cell);
   float target_load_sum = 0.0;
   int arc_count = 0;
   while (arc_set_iter.hasNext()) {
-    auto arc_set = arc_set_iter.next();
-    auto role = arc_set->role();
+    TimingArcSet *arc_set = arc_set_iter.next();
+    TimingRole *role = arc_set->role();
     if (!role->isTimingCheck()
 	&& role != TimingRole::tristateDisable()
 	&& role != TimingRole::tristateEnable()) {
@@ -658,12 +697,12 @@ Resizer::findBufferTargetSlews(LibertyLibrarySeq *resize_libs)
   tgt_slews_[RiseFall::fallIndex()] = 0.0;
   int tgt_counts[RiseFall::index_count]{0};
   
-  for (auto lib : *resize_libs) {
+  for (LibertyLibrary *lib : *resize_libs) {
     Slew slews[RiseFall::index_count]{0.0};
     int counts[RiseFall::index_count]{0};
     
     findBufferTargetSlews(lib, slews, counts);
-    for (auto rf : RiseFall::rangeIndex()) {
+    for (int rf : RiseFall::rangeIndex()) {
       tgt_slews_[rf] += slews[rf];
       tgt_counts[rf] += counts[rf];
       slews[rf] /= counts[rf];
@@ -674,7 +713,7 @@ Resizer::findBufferTargetSlews(LibertyLibrarySeq *resize_libs)
 		slews[RiseFall::fallIndex()]);
   }
 
-  for (auto rf : RiseFall::rangeIndex())
+  for (int rf : RiseFall::rangeIndex())
     tgt_slews_[rf] /= tgt_counts[rf];
 
   debugPrint2(debug_, "resizer", 1, "target_slews = %.2e/%.2e\n",
@@ -688,13 +727,13 @@ Resizer::findBufferTargetSlews(LibertyLibrary *library,
 			       Slew slews[],
 			       int counts[])
 {
-  for (auto buffer : *library->buffers()) {
+  for (LibertyCell *buffer : *library->buffers()) {
     if (!dontUse(buffer)) {
       LibertyPort *input, *output;
       buffer->bufferPorts(input, output);
-      auto arc_sets = buffer->timingArcSets(input, output);
+      TimingArcSetSeq *arc_sets = buffer->timingArcSets(input, output);
       if (arc_sets) {
-	for (auto arc_set : *arc_sets) {
+	for (TimingArcSet *arc_set : *arc_sets) {
 	  TimingArcSetArcIterator arc_iter(arc_set);
 	  while (arc_iter.hasNext()) {
 	    TimingArc *arc = arc_iter.next();
@@ -738,7 +777,7 @@ Resizer::findClkNets()
   BfsFwdIterator bfs(BfsIndex::other, &srch_pred, this);
   PinSet clk_pins;
   search_->findClkVertexPins(clk_pins);
-  for (auto pin : clk_pins) {
+  for (Pin *pin : clk_pins) {
     Vertex *vertex, *bidirect_drvr_vertex;
     graph_->pinVertices(pin, vertex, bidirect_drvr_vertex);
     bfs.enqueue(vertex);
@@ -769,7 +808,9 @@ Resizer::makeNetParasitics()
   while (net_iter->hasNext()) {
     Net *net = net_iter->next();
     // Hands off the clock nets.
-    if (!isClock(net))
+    if (!isClock(net)
+	&& !network_->isPower(net)
+	&& !network_->isGround(net))
       makeNetParasitics(net);
   }
   delete net_iter;
@@ -851,7 +892,7 @@ class RebufferOption
 public:
   RebufferOption(RebufferOptionType type,
 		 float cap,
-		 Required required,
+		 Requireds requireds,
 		 Pin *load_pin,
 		 Point location,
 		 RebufferOption *ref,
@@ -864,7 +905,10 @@ public:
 		 Resizer *resizer);
   RebufferOptionType type() const { return type_; }
   float cap() const { return cap_; }
-  Required required() const { return required_; }
+  Required required(RiseFall *rf) { return requireds_[rf->index()]; }
+  Required requiredMin();
+  Requireds bufferRequireds(LibertyCell *buffer_cell,
+			    Resizer *resizer) const;
   Required bufferRequired(LibertyCell *buffer_cell,
 			  Resizer *resizer) const;
   Point location() const { return location_; }
@@ -876,7 +920,7 @@ public:
 private:
   RebufferOptionType type_;
   float cap_;
-  Required required_;
+  Requireds requireds_;
   Pin *load_pin_;
   Point location_;
   RebufferOption *ref_;
@@ -885,14 +929,14 @@ private:
 
 RebufferOption::RebufferOption(RebufferOptionType type,
 			       float cap,
-			       Required required,
+			       Requireds requireds,
 			       Pin *load_pin,
 			       Point location,
 			       RebufferOption *ref,
 			       RebufferOption *ref2) :
   type_(type),
   cap_(cap),
-  required_(required),
+  requireds_(requireds),
   load_pin_(load_pin),
   location_(location),
   ref_(ref),
@@ -943,40 +987,58 @@ RebufferOption::print(int level,
 	   sdc_network->pathName(load_pin_),
 	   location_.x(), location_.y(),
 	   units->capacitanceUnit()->asString(cap_),
-	   delayAsString(required_, resizer));
+	   delayAsString(requiredMin(), resizer));
     break;
   case RebufferOptionType::wire:
     printf("%*swire (%d, %d) cap %s req %s\n",
 	   level, "",
 	   location_.x(), location_.y(),
 	   units->capacitanceUnit()->asString(cap_),
-	   delayAsString(required_, resizer));
+	   delayAsString(requiredMin(), resizer));
     break;
   case RebufferOptionType::buffer:
     printf("%*sbuffer (%d, %d) cap %s req %s\n",
 	   level, "",
 	   location_.x(), location_.y(),
 	   units->capacitanceUnit()->asString(cap_),
-	   delayAsString(required_, resizer));
-
+	   delayAsString(requiredMin(), resizer));
     break;
   case RebufferOptionType::junction:
     printf("%*sjunction (%d, %d) cap %s req %s\n",
 	   level, "",
 	   location_.x(), location_.y(),
 	   units->capacitanceUnit()->asString(cap_),
-	   delayAsString(required_, resizer));
-
+	   delayAsString(requiredMin(), resizer));
     break;
   }
 }
 
-// Required time at input of buffer_cell driving this option.
+Required
+RebufferOption::requiredMin()
+{
+  return min(requireds_[RiseFall::riseIndex()],
+	     requireds_[RiseFall::fallIndex()]);
+}
+
+// Required times at input of buffer_cell driving this option.
+Requireds
+RebufferOption::bufferRequireds(LibertyCell *buffer_cell,
+				Resizer *resizer) const
+{
+  Requireds requireds = {requireds_[RiseFall::riseIndex()]
+			 - resizer->bufferDelay(buffer_cell, RiseFall::rise(), cap_),
+			 requireds_[RiseFall::fallIndex()]
+			 - resizer->bufferDelay(buffer_cell, RiseFall::fall(), cap_)};
+  return requireds;
+}
+
 Required
 RebufferOption::bufferRequired(LibertyCell *buffer_cell,
 			       Resizer *resizer) const
 {
-  return required_ - resizer->bufferDelay(buffer_cell, cap_);
+  Requireds requireds = bufferRequireds(buffer_cell, resizer);
+  return min(requireds[RiseFall::riseIndex()],
+	     requireds[RiseFall::fallIndex()]);
 }
 
 int
@@ -992,18 +1054,19 @@ RebufferOption::bufferCount() const
   case RebufferOptionType::sink:
     return 0;
   }
+  return 0;
 }
 
 RebufferOption *
 Resizer::makeRebufferOption(RebufferOptionType type,
 			    float cap,
-			    Required required,
+			    Requireds requireds,
 			    Pin *load_pin,
 			    Point location,
 			    RebufferOption *ref,
 			    RebufferOption *ref2)
 {
-  RebufferOption *option = new RebufferOption(type, cap, required,
+  RebufferOption *option = new RebufferOption(type, cap, requireds,
 					      load_pin, location, ref, ref2);
 
   rebuffer_options_.push_back(option);
@@ -1020,52 +1083,37 @@ Resizer::deleteRebufferOptions()
 
 // Assumes resizePreamble has been called.
 void
-Resizer::repairMaxCapSlew(bool repair_max_cap,
-			  bool repair_max_slew,
-			  LibertyCell *buffer_cell)
+Resizer::repairMaxCap(LibertyCell *buffer_cell)
 {
   inserted_buffer_count_ = 0;
   int repaired_net_count = 0;
-  int max_cap_violation_count = 0;
-  int max_slew_violation_count = 0;
+  int violation_count = 0;
 
   sta_->findDelays();
   // Rebuffer in reverse level order.
   for (int i = level_drvr_verticies_.size() - 1; i >= 0; i--) {
     Vertex *vertex = level_drvr_verticies_[i];
+    Pin *drvr_pin = vertex->pin();
     // Hands off the clock tree.
-    Net *net = network_->net(vertex->pin());
-    if (net && !isClock(net)) {
+    Net *net = network_->net(drvr_pin);
+    if (net
+	&& !isClock(net)
+	// Exclude tie hi/low cells.
+	&& !isFuncOneZero(drvr_pin)
+	// Hands off special nets.
+	&& !isSpecial(net)) {
       bool violation = false;
       float limit_ratio;
-      NetPinIterator *pin_iter = network_->pinIterator(net);
-      while (pin_iter->hasNext()) {
-	Pin *pin = pin_iter->next();
-	if (repair_max_cap) {
-	  checkMaxCapViolation(pin, violation, limit_ratio);
-	  if (violation) {
-	    max_cap_violation_count++;
-	    break;
-	  }
-	}
-	if (repair_max_slew) {
-	  checkMaxSlewViolation(pin, violation, limit_ratio);
-	  if (violation) {
-	    max_slew_violation_count++;
-	    break;
-	  }
-	}
-      }
-      delete pin_iter;
+      checkMaxCapViolation(drvr_pin, violation, limit_ratio);
       if (violation) {
+	violation_count++;
 	repaired_net_count++;
 	Pin *drvr_pin = vertex->pin();
 	int buffer_count = ceil(limit_ratio);
 	int buffer_fanout = ceil(fanout(drvr_pin) / static_cast<double>(buffer_count));
 	if (buffer_fanout > 1)
-	  bufferLoads(drvr_pin, buffer_count, buffer_fanout, buffer_cell);
-	else
-	  rebuffer(drvr_pin, buffer_cell);
+	  bufferLoads(drvr_pin, buffer_count, buffer_fanout,
+		      buffer_cell, "max_cap");
 	if (overMaxArea()) {
 	  warn("max utilization reached.");
 	  break;
@@ -1074,10 +1122,8 @@ Resizer::repairMaxCapSlew(bool repair_max_cap,
     }
   }
   
-  if (max_cap_violation_count > 0)
-    printf("Found %d max capacitance violations.\n", max_cap_violation_count);
-  if (max_slew_violation_count > 0)
-    printf("Found %d max slew violations.\n", max_slew_violation_count);
+  if (violation_count > 0)
+    printf("Found %d max capacitance violations.\n", violation_count);
   if (inserted_buffer_count_ > 0) {
     printf("Inserted %d buffers in %d nets.\n",
 	   inserted_buffer_count_,
@@ -1107,6 +1153,64 @@ Resizer::checkMaxCapViolation(const Pin *pin,
 }
 
 void
+Resizer::repairMaxSlew(LibertyCell *buffer_cell)
+{
+  inserted_buffer_count_ = 0;
+  int repaired_net_count = 0;
+  int violation_count = 0;
+
+  sta_->findDelays();
+  // Rebuffer in reverse level order.
+  for (int i = level_drvr_verticies_.size() - 1; i >= 0; i--) {
+    Vertex *vertex = level_drvr_verticies_[i];
+    const Pin *drvr_pin = vertex->pin();
+    Net *net = network_->net(vertex->pin());
+    if (net
+	// Hands off the clock tree.
+	&& !isClock(net)
+	// Exclude tie hi/low cells.
+	&& !isFuncOneZero(drvr_pin)
+	// Hands off special nets.
+	&& !isSpecial(net)) {
+      bool violation = false;
+      float limit_ratio;
+      NetPinIterator *pin_iter = network_->pinIterator(net);
+      while (pin_iter->hasNext()) {
+	Pin *pin = pin_iter->next();
+	checkMaxSlewViolation(pin, violation, limit_ratio);
+	if (violation) {
+	  violation_count++;
+	  break;
+	}
+      }
+      delete pin_iter;
+      if (violation) {
+	Pin *drvr_pin = vertex->pin();
+	int buffer_count = ceil(limit_ratio);
+	int buffer_fanout = ceil(fanout(drvr_pin) / static_cast<double>(buffer_count));
+	if (buffer_fanout > 1) {
+	  bufferLoads(drvr_pin, buffer_count, buffer_fanout, buffer_cell, "max_slew");
+	  repaired_net_count++;
+	}
+	if (overMaxArea()) {
+	  warn("max utilization reached.");
+	  break;
+	}
+      }
+    }
+  }
+  
+  if (violation_count > 0)
+    printf("Found %d max slew violations.\n", violation_count);
+  if (inserted_buffer_count_ > 0) {
+    printf("Inserted %d buffers in %d nets.\n",
+	   inserted_buffer_count_,
+	   repaired_net_count);
+    level_drvr_verticies_valid_ = false;
+  }
+}
+
+void
 Resizer::checkMaxSlewViolation(const Pin *pin,
 			       // Return values
 			       bool &violation,
@@ -1119,18 +1223,20 @@ Resizer::checkMaxSlewViolation(const Pin *pin,
   float limit;
   bool exists;
   slewLimit(pin, MinMax::max(), limit, exists);
-  for (auto rf : RiseFall::range()) {
-    Slew slew;
-    slew  = graph_->slew(vertex, rf, dcalc_ap_->index());
-    if (slew > limit) {
-      violation = true;
-      limit_ratio = max(limit_ratio, slew / limit);
-    }
-    if (bidirect_drvr_vertex) {
-      slew  = graph_->slew(bidirect_drvr_vertex, rf, dcalc_ap_->index());
+  if (exists) {
+    for (RiseFall *rf : RiseFall::range()) {
+      Slew slew;
+      slew  = graph_->slew(vertex, rf, dcalc_ap_->index());
       if (slew > limit) {
 	violation = true;
 	limit_ratio = max(limit_ratio, slew / limit);
+      }
+      if (bidirect_drvr_vertex) {
+	slew  = graph_->slew(bidirect_drvr_vertex, rf, dcalc_ap_->index());
+	if (slew > limit) {
+	  violation = true;
+	  limit_ratio = max(limit_ratio, slew / limit);
+	}
       }
     }
   }
@@ -1146,51 +1252,56 @@ Resizer::slewLimit(const Pin *pin,
 {
   exists = false;
   Cell *top_cell = network_->cell(network_->topInstance());
-  float top_limit;
-  bool top_limit_exists;
+  float limit1;
+  bool exists1;
   sdc_->slewLimit(top_cell, min_max,
-		  top_limit, top_limit_exists);
+		  limit1, exists1);
 
   // Default to top ("design") limit.
-  exists = top_limit_exists;
-  limit = top_limit;
+  exists = exists1;
+  limit = limit1;
   if (network_->isTopLevelPort(pin)) {
     Port *port = network_->port(pin);
-    float port_limit;
-    bool port_limit_exists;
-    sdc_->slewLimit(port, min_max, port_limit, port_limit_exists);
+    sdc_->slewLimit(port, min_max, limit1, exists1);
     // Use the tightest limit.
-    if (port_limit_exists
+    if (exists1
 	&& (!exists
-	    || min_max->compare(limit, port_limit))) {
-      limit = port_limit;
+	    || min_max->compare(limit, limit1))) {
+      limit = limit1;
       exists = true;
     }
   }
   else {
-    float pin_limit;
-    bool pin_limit_exists;
     sdc_->slewLimit(pin, min_max,
-		    pin_limit, pin_limit_exists);
+		    limit1, exists1);
     // Use the tightest limit.
-    if (pin_limit_exists
+    if (exists1
 	&& (!exists
-	    || min_max->compare(limit, pin_limit))) {
-      limit = pin_limit;
+	    || min_max->compare(limit, limit1))) {
+      limit = limit1;
       exists = true;
     }
 
-    float port_limit;
-    bool port_limit_exists;
     LibertyPort *port = network_->libertyPort(pin);
     if (port) {
-      port->slewLimit(min_max, port_limit, port_limit_exists);
+      port->slewLimit(min_max, limit1, exists1);
       // Use the tightest limit.
-      if (port_limit_exists
-	  && (!exists
-	      || min_max->compare(limit, port_limit))) {
-	limit = port_limit;
-	exists = true;
+      if (exists1) {
+	if (!exists
+	    || min_max->compare(limit, limit1)) {
+	  limit = limit1;
+	  exists = true;
+	}
+      }
+      else if (port->direction()->isAnyOutput()
+	       && min_max == MinMax::max()) {
+	port->libertyLibrary()->defaultMaxSlew(limit1, exists1);
+	if (exists1
+	    && (!exists
+		|| min_max->compare(limit, limit1))) {
+	  limit = limit1;
+	  exists = true;
+	}
       }
     }
   }
@@ -1211,6 +1322,9 @@ Resizer::rebuffer(Net *net,
   }
   printf("Inserted %d buffers.\n", inserted_buffer_count_);
 }
+
+typedef array<Delay, RiseFall::index_count> Delays;
+typedef array<Slack, RiseFall::index_count> Slacks;
 
 void
 Resizer::rebuffer(const Pin *drvr_pin,
@@ -1243,32 +1357,38 @@ Resizer::rebuffer(const Pin *drvr_pin,
 					     1, buffer_cell);
       Required best_slack = -INF;
       RebufferOption *best_option = nullptr;
-      for (auto p : Z) {
+      int best_index = 0;
+      int i = 1;
+      for (RebufferOption *p : Z) {
 	// Find required for drvr_pin into option.
-	Delay gate_delay = gateDelay(drvr_port, p->cap());
-	Slack slack = p->required() - gate_delay;
-	debugPrint5(debug_, "rebuffer", 3, "option %d buffers req %s - %s = %s cap %s\n",
+	Delays  gate_delays{gateDelay(drvr_port, RiseFall::rise(), p->cap()),
+			    gateDelay(drvr_port, RiseFall::fall(), p->cap())};
+	Slacks slacks{p->required(RiseFall::rise()) - gate_delays[RiseFall::riseIndex()],
+		      p->required(RiseFall::fall()) - gate_delays[RiseFall::fallIndex()]};
+	RiseFall *rf = (slacks[RiseFall::riseIndex()] < slacks[RiseFall::fallIndex()])
+	  ? RiseFall::rise()
+	  : RiseFall::fall();
+	int rf_index = rf->index();
+	debugPrint7(debug_, "rebuffer", 3,
+		    "option %d: %d buffers req %s %s - %ss = %ss cap %s\n",
+		    i,
 		    p->bufferCount(),
-		    delayAsString(p->required(), this),
-		    delayAsString(gate_delay, this),
-		    delayAsString(slack, this),
+		    rf->asString(),
+		    delayAsString(p->required(rf), this),
+		    delayAsString(gate_delays[rf_index], this),
+		    delayAsString(slacks[rf_index], this),
 		    units_->capacitanceUnit()->asString(p->cap()));
 	if (debug_->check("rebuffer", 4))
 	  p->printTree(this);
-	if (fuzzyGreater(slack, best_slack)) {
-	  best_slack = slack;
+	if (fuzzyGreater(slacks[rf_index], best_slack)) {
+	  best_slack = slacks[rf_index];
 	  best_option = p;
+	  best_index = i;
 	}
+	i++;
       }
       if (best_option) {
-	Delay gate_delay = gateDelay(drvr_port, best_option->cap());
-	Slack slack = best_option->required() - gate_delay;
-	debugPrint5(debug_, "rebuffer", 3, "best   %d buffers req %s - %s = %s cap %s\n",
-		    best_option->bufferCount(),
-		    delayAsString(best_option->required(), this),
-		    delayAsString(gate_delay, this),
-		    delayAsString(slack, this),
-		    units_->capacitanceUnit()->asString(best_option->cap()));
+	debugPrint1(debug_, "rebuffer", 3, "best option %d\n", best_index);
 	int before = inserted_buffer_count_;
 	rebufferTopDown(best_option, net, 1, buffer_cell);
 	if (inserted_buffer_count_ != before)
@@ -1296,34 +1416,6 @@ Resizer::hasTopLevelOutputPort(Net *net)
   return false;
 }
 
-class RebufferOptionBufferReqGreater
-{
-public:
-  RebufferOptionBufferReqGreater(LibertyCell *buffer_cell,
-				 Resizer *resizer);
-  bool operator()(RebufferOption *option1,
-		  RebufferOption *option2);
-
-protected:
-  LibertyCell *buffer_cell_;
-  Resizer *resizer_;
-};
-
-RebufferOptionBufferReqGreater::RebufferOptionBufferReqGreater(LibertyCell *buffer_cell,
-							       Resizer *resizer) :
-  buffer_cell_(buffer_cell),
-  resizer_(resizer)
-{
-}
- 
-bool
-RebufferOptionBufferReqGreater::operator()(RebufferOption *option1,
-					   RebufferOption *option2)
-{
-  return fuzzyGreater(option1->bufferRequired(buffer_cell_, resizer_),
-		      option2->bufferRequired(buffer_cell_, resizer_));
-}
-
 // The routing tree is represented a binary tree with the sinks being the leaves
 // of the tree, the junctions being the Steiner nodes and the root being the
 // source of the net.
@@ -1340,7 +1432,7 @@ Resizer::rebufferBottomUp(SteinerTree *tree,
       // Load capacitance and required time.
       RebufferOption *z = makeRebufferOption(RebufferOptionType::sink,
 					     pinCapacitance(pin),
-					     pinRequired(pin),
+					     pinRequireds(pin),
 					     pin,
 					     tree->location(k),
 					     nullptr, nullptr);
@@ -1358,12 +1450,15 @@ Resizer::rebufferBottomUp(SteinerTree *tree,
 					      level + 1, buffer_cell);
       RebufferOptionSeq Z;
       // Combine the options from both branches.
-      for (auto p : Zl) {
-	for (auto q : Zr) {
+      for (RebufferOption *p : Zl) {
+	for (RebufferOption *q : Zr) {
+	  Requireds junc_reqs{min(p->required(RiseFall::rise()),
+				  q->required(RiseFall::rise())),
+			      min(p->required(RiseFall::fall()),
+				  q->required(RiseFall::fall()))};
 	  RebufferOption *junc = makeRebufferOption(RebufferOptionType::junction,
 						    p->cap() + q->cap(),
-						    min(p->required(),
-							q->required()),
+						    junc_reqs,
 						    nullptr,
 						    tree->location(k),
 						    p, q);
@@ -1372,17 +1467,21 @@ Resizer::rebufferBottomUp(SteinerTree *tree,
       }
       // Prune the options. This is fanout^2.
       // Presort options to hit better options sooner.
-      sort(Z, RebufferOptionBufferReqGreater(buffer_cell, this));
+      sort(Z, [](RebufferOption *option1,
+		 RebufferOption *option2)
+	      {   return fuzzyGreater(option1->requiredMin(),
+				      option2->requiredMin());
+	      });
       int si = 0;
       for (size_t pi = 0; pi < Z.size(); pi++) {
-	auto p = Z[pi];
+	RebufferOption *p = Z[pi];
 	float Lp = p->cap();
 	// Remove options by shifting down with index si.
 	si = pi + 1;
 	// Because the options are sorted we don't have to look
 	// beyond the first option.
 	for (size_t qi = pi + 1; qi < Z.size(); qi++) {
-	  auto q = Z[qi];
+	  RebufferOption *q = Z[qi];
 	  float Lq = q->cap();
 	  // We know Tq <= Tp from the sort so we don't need to check req.
 	  // If q is the same or worse than p, remove solution q.
@@ -1408,7 +1507,7 @@ Resizer::addWireAndBuffer(RebufferOptionSeq Z,
 {
   RebufferOptionSeq Z1;
   Required best_req = -INF;
-  RebufferOption *best_ref = nullptr;
+  RebufferOption *best_option = nullptr;
   Point k_loc = tree->location(k);
   Point prev_loc = tree->location(prev);
   int wire_length_dbu = abs(k_loc.x() - prev_loc.x())
@@ -1417,12 +1516,14 @@ Resizer::addWireAndBuffer(RebufferOptionSeq Z,
   float wire_cap = wire_length * wire_cap_;
   float wire_res = wire_length * wire_res_;
   float wire_delay = wire_res * wire_cap;
-  for (auto p : Z) {
+  for (RebufferOption *p : Z) {
+    // account for wire delay
+    Requireds reqs{p->required(RiseFall::rise()) - wire_delay,
+		   p->required(RiseFall::fall()) - wire_delay};
     RebufferOption *z = makeRebufferOption(RebufferOptionType::wire,
 					   // account for wire load
 					   p->cap() + wire_cap,
-					   // account for wire delay
-					   p->required() - wire_delay,
+					   reqs,
 					   nullptr,
 					   prev_loc,
 					   p, nullptr);
@@ -1441,26 +1542,24 @@ Resizer::addWireAndBuffer(RebufferOptionSeq Z,
     Required req = z->bufferRequired(buffer_cell, this);
     if (fuzzyGreater(req, best_req)) {
       best_req = req;
-      best_ref = p;
+      best_option = z;
     }
   }
-  if (best_ref) {
+  if (best_option) {
+    Requireds requireds = best_option->bufferRequireds(buffer_cell, this);
     RebufferOption *z = makeRebufferOption(RebufferOptionType::buffer,
 					   bufferInputCapacitance(buffer_cell),
-					   // Seems like this double counts
-					   // the delay driving this option.
-					   best_req,
-					   //best_ref->required(),
+					   requireds,
 					   nullptr,
 					   // Locate buffer at opposite end of wire.
 					   prev_loc,
-					   best_ref, nullptr);
+					   best_option, nullptr);
     if (debug_->check("rebuffer", 3)) {
       printf("%*sbuffer %s cap %s req %s ->\n",
 	     level, "",
 	     tree->name(prev, sdc_network_),
-	     units_->capacitanceUnit()->asString(best_ref->cap()),
-	     delayAsString(best_ref->required(), this));
+	     units_->capacitanceUnit()->asString(best_option->cap()),
+	     delayAsString(best_req, this));
       z->print(level, this);
     }
     Z1.push_back(z);
@@ -1479,7 +1578,7 @@ Resizer::rebufferTopDown(RebufferOption *choice,
   case RebufferOptionType::buffer: {
     Instance *parent = db_network_->topInstance();
     string net2_name = makeUniqueNetName();
-    string buffer_name = makeUniqueBufferName();
+    string buffer_name = makeUniqueInstName("rebuffer");
     Net *net2 = db_network_->makeNet(net2_name.c_str(), parent);
     Instance *buffer = db_network_->makeInstance(buffer_cell,
 						 buffer_name.c_str(),
@@ -1544,14 +1643,19 @@ Resizer::repairMaxFanout(int max_fanout,
   for (int i = level_drvr_verticies_.size() - 1; i >= 0; i--) {
     Vertex *vertex = level_drvr_verticies_[i];
     Pin *drvr_pin = vertex->pin();
+    Net *net = network_->net(drvr_pin);
     // Hands off the clock tree.
     if (!network_->isTopLevelPort(drvr_pin)
-	&& !search_->isClock(vertex)) {
+	&& !search_->isClock(vertex)
+	// Exclude tie hi/low cells.
+	&& !isFuncOneZero(drvr_pin)
+	&& net
+	&& !isSpecial(net)) {
       int fanout = this->fanout(drvr_pin);
       if (fanout > max_fanout) {
 	max_fanout_violation_count++;
 	int buffer_count = ceil(fanout / static_cast<double>(max_fanout));
-	bufferLoads(drvr_pin, buffer_count, max_fanout, buffer_cell);
+	bufferLoads(drvr_pin, buffer_count, max_fanout, buffer_cell, "max_fanout");
 	if (overMaxArea()) {
 	  warn("max utilization reached.");
 	  break;
@@ -1562,15 +1666,18 @@ Resizer::repairMaxFanout(int max_fanout,
 
   if (max_fanout_violation_count > 0)
     printf("Found %d max fanout violations.\n", max_fanout_violation_count);
-  if (inserted_buffer_count_ > 0)
+  if (inserted_buffer_count_ > 0) {
     printf("Inserted %d buffers.\n", inserted_buffer_count_);
+    level_drvr_verticies_valid_ = false;
+  }
 }
 
 void
 Resizer::bufferLoads(Pin *drvr_pin,
 		     int buffer_count,
 		     int max_fanout,
-		     LibertyCell *buffer_cell)
+		     LibertyCell *buffer_cell,
+		     const char *reason)
 {
   debugPrint1(debug_, "buffer_loads", 2, "driver %s\n",
 	      sdc_network_->pathName(drvr_pin));
@@ -1589,7 +1696,7 @@ Resizer::bufferLoads(Pin *drvr_pin,
 
       string load_net_name = makeUniqueNetName();
       Net *load_net = db_network_->makeNet(load_net_name.c_str(), top_inst);
-      string inst_name = makeUniqueBufferName();
+      string inst_name = makeUniqueInstName(reason);
       Instance *buffer = db_network_->makeInstance(buffer_cell,
 						   inst_name.c_str(),
 						   top_inst);
@@ -1817,7 +1924,7 @@ Resizer::repairTieFanout(LibertyPort *tie_port,
 	PinSeq &loads = grouped_loads[i + 1];
 	Point center = findCenter(loads);
 
-	string clone_name = makeUniqueInstName(inst_name);
+	string clone_name = makeUniqueInstName(inst_name, true);
 	Instance *clone = sta_->makeInstance(clone_name.c_str(),
 					     tie_cell, top_inst);
 	setLocation(clone, center);
@@ -1871,10 +1978,12 @@ Resizer::repairHoldViolations(LibertyCell *buffer_cell)
 {
   init();
   sta_->findRequireds();
+  Search *search = sta_->search();
   VertexSet hold_failures;
   // Find endpoints with hold violation.
   for (Vertex *end : *sta_->search()->endpoints()) {
-    if (sta_->vertexSlack(end, MinMax::min()) < 0.0)
+    if (!search->isClock(end)
+	&& sta_->vertexSlack(end, MinMax::min()) < 0.0)
       hold_failures.insert(end);
   }
   if (debug_->check("repair_hold", 2)) {
@@ -1937,11 +2046,17 @@ Resizer::repairHoldPass(VertexSet &ends,
 		  delayAsString(weight_map[vertex], this),
 		  delayAsString(slackGap(vertex), this));
       Pin *drvr_pin = vertex->pin();
-      repairHoldBuffer(drvr_pin, hold_slack, buffer_cell);
-      repair_count++;
-      if (overMaxArea()) {
-	warn("max utilization reached.");
-	break;
+      Net *net = network_->isTopLevelPort(drvr_pin)
+	? network_->net(network_->term(drvr_pin))
+	: network_->net(drvr_pin);
+      // Hands off special nets.
+      if (!isSpecial(net)) {
+	repairHoldBuffer(drvr_pin, hold_slack, buffer_cell);
+	repair_count++;
+	if (overMaxArea()) {
+	  warn("max utilization reached.");
+	  break;
+	}
       }
     }
   }
@@ -1954,7 +2069,7 @@ Resizer::repairHoldBuffer(Pin *drvr_pin,
 {
   Instance *parent = db_network_->topInstance();
   string net2_name = makeUniqueNetName();
-  string buffer_name = makeUniqueBufferName();
+  string buffer_name = makeUniqueInstName("hold");
   Net *net2 = db_network_->makeNet(net2_name.c_str(), parent);
   Instance *buffer = db_network_->makeInstance(buffer_cell,
 					       buffer_name.c_str(),
@@ -1993,10 +2108,12 @@ Resizer::findFaninWeights(VertexSet &ends,
 
   while (iter.hasNext()) {
     Vertex *vertex = iter.next();
-    if (!search->isEndpoint(vertex)
-	&& vertex->isDriver(db_network_))
-      weight_map[vertex] += sta_->vertexSlack(vertex, MinMax::min());
-    iter.enqueueAdjacentVertices(vertex);
+    if (!search->isClock(vertex)) {
+      if (!search->isEndpoint(vertex)
+	  && vertex->isDriver(db_network_))
+	weight_map[vertex] += sta_->vertexSlack(vertex, MinMax::min());
+      iter.enqueueAdjacentVertices(vertex);
+    }
   }
 }
 
@@ -2010,19 +2127,19 @@ Resizer::sortFaninsByWeight(VertexWeightMap &weight_map,
     fanins.push_back(vertex);
   }
   sort(fanins, [&](Vertex *v1, Vertex *v2)
-	      { float w1 = weight_map[v1];
-		float w2 = weight_map[v2];
-		if (fuzzyEqual(w1, w2)) {
-		  float gap1 = slackGap(v1);
-		  float gap2 = slackGap(v2);
-		  // Break ties based on the hold/setup gap.
-		  if (fuzzyEqual(gap1, gap2))
-		    return v1->level() > v2->level();
-		  else
-		    return gap1 > gap2;
-		}
-		else
-		  return w1 < w2;});
+	       { float w1 = weight_map[v1];
+		 float w2 = weight_map[v2];
+		 if (fuzzyEqual(w1, w2)) {
+		   float gap1 = slackGap(v1);
+		   float gap2 = slackGap(v2);
+		   // Break ties based on the hold/setup gap.
+		   if (fuzzyEqual(gap1, gap2))
+		     return v1->level() > v2->level();
+		   else
+		     return gap1 > gap2;
+		 }
+		 else
+		   return w1 < w2;});
 }
 
 // Gap between min setup and hold slacks.
@@ -2044,7 +2161,7 @@ cellDriveResistance(const LibertyCell *cell)
 {
   LibertyCellPortBitIterator port_iter(cell);
   while (port_iter.hasNext()) {
-    auto port = port_iter.next();
+    LibertyPort *port = port_iter.next();
     if (port->direction()->isOutput())
       return port->driveResistance();
   }
@@ -2104,19 +2221,16 @@ Resizer::findFloatingNets()
   NetIterator *net_iter = network_->netIterator(network_->topInstance());
   while (net_iter->hasNext()) {
     Net *net = net_iter->next();
-    NetConnectedPinIterator *pin_iter = network_->connectedPinIterator(net);
-    int pin_count = 0;
-    while (pin_iter->hasNext()) {
-      pin_iter->next();
-      pin_count++;
-      if (pin_count > 1)
-	break;
-    }
-    delete pin_iter;
-    if (pin_count == 1)
+    PinSeq loads;
+    PinSeq drvrs;
+    PinSet visited_drvrs;
+    FindNetDrvrLoads visitor(nullptr, visited_drvrs, loads, drvrs, network_);
+    network_->visitConnectedPins(net, visitor);
+    if (drvrs.size() == 0 && loads.size() > 0)
       floating_nets->push_back(net);
   }
   delete net_iter;
+  sort(floating_nets, sta::NetPathNameLess(network_));
   return floating_nets;
 }
 
@@ -2134,17 +2248,19 @@ Resizer::makeUniqueNetName()
 }
 
 string
-Resizer::makeUniqueBufferName()
+Resizer::makeUniqueInstName(const char *base_name)
 {
-  return makeUniqueInstName("buffer");
+  return makeUniqueInstName(base_name, false);
 }
 
 string
-Resizer::makeUniqueInstName(const char *base_name)
+Resizer::makeUniqueInstName(const char *base_name,
+			    bool underscore)
 {
   string inst_name;
   do 
-    stringPrint(inst_name, "%s%d", base_name, unique_inst_index_++);
+    stringPrint(inst_name, underscore ? "%s_%d" : "%s%d",
+		base_name, unique_inst_index_++);
   while (network_->findInstance(inst_name.c_str()));
   return inst_name;
 }
@@ -2175,35 +2291,41 @@ Resizer::portCapacitance(const LibertyPort *port)
   return max(cap1, cap2);
 }
 
-Required
-Resizer::pinRequired(const Pin *pin)
+Requireds
+Resizer::pinRequireds(const Pin *pin)
 {
   Vertex *vertex = graph_->pinLoadVertex(pin);
   PathAnalysisPt *path_ap = corner_->findPathAnalysisPt(min_max_);
-  //  Required required = sta_->vertexRequired(vertex, RiseFall::fall(), path_ap);
-  Required required = sta_->vertexRequired(vertex, min_max_);
-  if (fuzzyInf(required))
-    // Unconstrained pin.
-    required = 0.0;
-  return required;
+  Requireds requireds;
+  for (RiseFall *rf : RiseFall::range()) {
+    int rf_index = rf->index();
+    Required required = sta_->vertexRequired(vertex, rf, path_ap);
+    if (fuzzyInf(required))
+      // Unconstrained pin.
+      required = 0.0;
+    requireds[rf_index] = required;
+  }
+  return requireds;
 }
 
 float
 Resizer::bufferDelay(LibertyCell *buffer_cell,
+		     RiseFall *rf,
 		     float load_cap)
 {
   LibertyPort *input, *output;
   buffer_cell->bufferPorts(input, output);
-  return gateDelay(output, load_cap);
+  return gateDelay(output, rf, load_cap);
 }
 
 float
 Resizer::gateDelay(LibertyPort *out_port,
+		   RiseFall *rf,
 		   float load_cap)
 {
   LibertyCell *cell = out_port->libertyCell();
   // Max rise/fall delays.
-  ArcDelay max_delay[RiseFall::index_count] = {-INF, -INF};
+  ArcDelay max_delays[RiseFall::index_count] = {-INF, -INF};
   LibertyCellTimingArcSetIterator set_iter(cell);
   while (set_iter.hasNext()) {
     TimingArcSet *arc_set = set_iter.next();
@@ -2220,11 +2342,11 @@ Resizer::gateDelay(LibertyPort *out_port,
 				   nullptr, 0.0, pvt_, dcalc_ap_,
 				   gate_delay,
 				   drvr_slew);
-	max_delay[out_rf_index] = max(max_delay[out_rf_index], gate_delay);
+	max_delays[out_rf_index] = max(max_delays[out_rf_index], gate_delay);
       }
     }
   }
-  return max(max_delay[RiseFall::riseIndex()], max_delay[RiseFall::fallIndex()]);
+  return max_delays[rf->index()];
 }
 
 double
@@ -2253,10 +2375,15 @@ pinLocation(Pin *pin,
   dbBTerm *bterm;
   network->staToDb(pin, iterm, bterm);
   if (iterm) {
-    dbInst *inst = iterm->getInst();
     int x, y;
-    inst->getOrigin(x, y);
-    return Point(x, y);
+    if (iterm->getAvgXY(&x, &y))
+      return Point(x, y);
+    else {
+      dbInst *inst = iterm->getInst();
+      int x, y;
+      inst->getOrigin(x, y);
+      return Point(x, y);
+    }
   }
   if (bterm) {
     int x, y;
@@ -2264,7 +2391,7 @@ pinLocation(Pin *pin,
       return Point(x, y);
   }
   return Point(0, 0);
-}  
+}
 
 bool
 pinIsPlaced(Pin *pin,
@@ -2280,10 +2407,7 @@ pinIsPlaced(Pin *pin,
   }
   if (bterm)
     status = bterm->getFirstPinPlacementStatus();
-  return status == dbPlacementStatus::PLACED
-    || status == dbPlacementStatus::LOCKED
-    || status == dbPlacementStatus::FIRM
-    || status == dbPlacementStatus::COVER;
+  return status.isPlaced();
 }
 
 int
@@ -2308,6 +2432,25 @@ Resizer::findLoads(Pin *drvr_pin,
   PinSet visited_drvrs;
   FindNetDrvrLoads visitor(drvr_pin, visited_drvrs, loads, drvrs, network_);
   network_->visitConnectedPins(drvr_pin, visitor);
+}
+
+bool
+Resizer::isFuncOneZero(const Pin *drvr_pin)
+{
+  LibertyPort *port = network_->libertyPort(drvr_pin);
+  if (port) {
+    FuncExpr *func = port->function();
+    return func && (func->op() == FuncExpr::op_zero
+		    || func->op() == FuncExpr::op_one);
+  }
+  return false;
+}
+
+bool
+Resizer::isSpecial(Net *net)
+{
+  dbNet *db_net = db_network_->staToDb(net);
+  return db_net->isSpecial();
 }
 
 }

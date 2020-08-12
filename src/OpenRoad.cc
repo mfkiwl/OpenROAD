@@ -1,15 +1,39 @@
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-// 
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-// 
-// You should have received a copy of the GNU General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+/////////////////////////////////////////////////////////////////////////////
+//
+// BSD 3-Clause License
+//
+// Copyright (c) 2019, James Cherry, Parallax Software, Inc.
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+// * Redistributions of source code must retain the above copyright notice, this
+//   list of conditions and the following disclaimer.
+//
+// * Redistributions in binary form must reproduce the above copyright notice,
+//   this list of conditions and the following disclaimer in the documentation
+//   and/or other materials provided with the distribution.
+//
+// * Neither the name of the copyright holder nor the names of its
+//   contributors may be used to endorse or promote products derived from
+//   this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+// POSSIBILITY OF SUCH DAMAGE.
+//
+///////////////////////////////////////////////////////////////////////////////
+
+#include "openroad/OpenRoad.hh"
 
 #include "opendb/db.h"
 #include "opendb/wOrder.h"
@@ -17,16 +41,15 @@
 #include "opendb/defin.h"
 #include "opendb/defout.h"
 
-#include "Machine.hh"
-#include "VerilogWriter.hh"
-#include "StaMain.hh"
+#include "sta/VerilogWriter.hh"
+#include "sta/StaMain.hh"
 
 #include "db_sta/dbSta.hh"
 #include "db_sta/MakeDbSta.hh"
 
 #include "db_sta/dbReadVerilog.hh"
 #include "db_sta/dbNetwork.hh"
-#include "openroad/OpenRoad.hh"
+
 #include "openroad/InitOpenRoad.hh"
 #include "flute3/flute.h"
 
@@ -41,8 +64,11 @@
 #include "TritonCTS/src/MakeTritoncts.h"
 #include "tapcell/MakeTapcell.h"
 #include "OpenRCX/MakeOpenRCX.h"
-#include "OpenPhySyn/MakeOpenPhySyn.hpp"
 #include "pdnsim/MakePDNSim.hh"
+#ifdef BUILD_OPENPHYSYN
+  #include "OpenPhySyn/MakeOpenPhySyn.hpp"
+#endif
+
 #include "tool/MakeTool.hh"
 
 namespace sta {
@@ -61,6 +87,8 @@ using std::min;
 using std::max;
 
 using odb::dbLib;
+using odb::dbTech;
+using odb::dbChip;
 using odb::dbDatabase;
 using odb::dbBlock;
 using odb::Rect;
@@ -83,7 +111,9 @@ OpenRoad::~OpenRoad()
   deleteDbSta(sta_);
   deleteResizer(resizer_);
   deleteOpendp(opendp_);
+#ifdef BUILD_OPENPHYSYN
   deletePsn(psn_);
+#endif
   odb::dbDatabase::destroy(db_);
 }
 
@@ -93,13 +123,21 @@ OpenRoad::getDbNetwork()
   return sta_->getDbNetwork();
 }
 
+/* static */
+OpenRoad *OpenRoad::openRoad()
+{
+  if (openroad_ == nullptr) {
+    openroad_ = new OpenRoad;    
+  }
+  return openroad_;
+}
+
 ////////////////////////////////////////////////////////////////
 
 void
 initOpenRoad(Tcl_Interp *interp)
 {
-  OpenRoad *openroad = new OpenRoad;
-  openroad->init(interp);
+  OpenRoad::openRoad()->init(interp);
 }
 
 void
@@ -111,21 +149,26 @@ OpenRoad::init(Tcl_Interp *tcl_interp)
   db_ = dbDatabase::create();
   sta_ = makeDbSta();
   verilog_network_ = makeDbVerilogNetwork();
-  // Only idiots need casts here. Don't copy this.
-  ioPlacer_ = (ioPlacer::IOPlacementKernel*) makeIoplacer();
+  ioPlacer_ = makeIoplacer();
   resizer_ = makeResizer();
   opendp_ = makeOpendp();
+<<<<<<< HEAD
   // Only idiots need casts here. Don't copy this.
   fastRoute_ = (FastRoute::FastRouteKernel*) makeFastRoute();
   tool_ = makeTool();
 
+=======
+  fastRoute_ = makeFastRoute();
+>>>>>>> master
   tritonCts_ = makeTritonCts();
   tapcell_ = makeTapcell();
   tritonMp_ = makeTritonMp();
   extractor_ = makeOpenRCX();
   replace_ = makeReplace();
-  psn_ = makePsn();
   pdnsim_ = makePDNSim();
+#ifdef BUILD_OPENPHYSYN
+  psn_ = makePsn();
+#endif
 
   // Init components.
   Openroad_Init(tcl_interp);
@@ -146,10 +189,16 @@ OpenRoad::init(Tcl_Interp *tcl_interp)
   initTapcell(this);
   initTritonMp(this);
   initOpenRCX(this);
-  initPsn(this);
   initPDNSim(this);
+<<<<<<< HEAD
   initTool(this);
   
+=======
+#ifdef BUILD_OPENPHYSYN
+    initPsn(this);
+#endif
+
+>>>>>>> master
   // Import exported commands to global namespace.
   Tcl_Eval(tcl_interp, "sta::define_sta_cmds");
   Tcl_Eval(tcl_interp, "namespace import sta::*");
@@ -164,34 +213,50 @@ OpenRoad::readLef(const char *filename,
 		  bool make_library)
 {
   odb::lefin lef_reader(db_, false);
+  dbLib *lib = nullptr;
+  dbTech *tech = nullptr;
   if (make_tech && make_library) {
-    dbLib *lib = lef_reader.createTechAndLib(lib_name, filename);
-    if (lib)
-      sta_->readLefAfter(lib);
+    lib = lef_reader.createTechAndLib(lib_name, filename);
+    tech = db_->getTech();
+  } else if (make_tech) {
+    tech = lef_reader.createTech(filename);
+  } else if (make_library) {
+    lib = lef_reader.createLib(lib_name, filename);
   }
-  else if (make_tech)
-    lef_reader.createTech(filename);
-  else if (make_library) {
-    dbLib *lib = lef_reader.createLib(lib_name, filename);
-    if (lib)
-      sta_->readLefAfter(lib);
+
+  // both are null on parser failure
+  if (lib != nullptr || tech != nullptr) {
+    for (Observer* observer : observers_) {
+      observer->postReadLef(tech, lib);
+    }
   }
 }
 
 void
-OpenRoad::readDef(const char *filename, bool order_wires)
+OpenRoad::readDef(const char *filename,
+		  bool order_wires,
+		  bool continue_on_errors)
 {
   odb::defin def_reader(db_);
   std::vector<odb::dbLib *> search_libs;
   for (odb::dbLib *lib : db_->getLibs())
     search_libs.push_back(lib);
-  def_reader.createChip(search_libs, filename);
-  if (order_wires) {
-    odb::orderWires(db_->getChip()->getBlock(),
-                    nullptr /* net_name_or_id*/,
-                    false /* force */);
+  if (continue_on_errors) {
+    def_reader.continueOnErrors();
   }
-  sta_->readDefAfter();
+  dbChip* chip = def_reader.createChip(search_libs, filename);
+  if (chip) {
+    dbBlock* block = chip->getBlock();
+    if (order_wires) {
+      odb::orderWires(block,
+		      nullptr /* net_name_or_id*/,
+		      false /* force */);
+    }
+
+    for (Observer* observer : observers_) {
+      observer->postReadDef(block);
+    }
+  }
 }
 
 static odb::defout::Version
@@ -230,10 +295,15 @@ void
 OpenRoad::readDb(const char *filename)
 {
   FILE *stream = fopen(filename, "r");
-  if (stream) {
-    db_->read(stream);
-    sta_->readDbAfter();
-    fclose(stream);
+  if (stream == nullptr) {
+    return;
+  }
+
+  db_->read(stream);
+  fclose(stream);
+
+  for (Observer* observer : observers_) {
+    observer->postReadDb(db_);
   }
 }
 
@@ -258,7 +328,9 @@ OpenRoad::linkDesign(const char *design_name)
 
 {
   dbLinkDesign(design_name, verilog_network_, db_);
-  sta_->readDbAfter();
+  for (Observer* observer : observers_) {
+    observer->postReadDb(db_);
+  }
 }
 
 void
@@ -281,6 +353,26 @@ OpenRoad::getCore()
   return ord::getCore(db_->getChip()->getBlock());
 }
 
+void OpenRoad::addObserver(Observer *observer)
+{
+  observer->owner_ = this;
+  observers_.insert(observer);
+}
+
+void OpenRoad::removeObserver(Observer *observer)
+{
+  observer->owner_ = nullptr;
+  observers_.erase(observer);
+}
+
+OpenRoad::Observer::~Observer()
+{
+  if (owner_) {
+    owner_->removeObserver(this);
+  }
+}
+
+
 ////////////////////////////////////////////////////////////////
 
 // Need a header for these functions cherry uses in
@@ -290,20 +382,7 @@ Rect
 getCore(dbBlock *block)
 {
   odb::Rect core;
-  auto rows = block->getRows();
-  if (rows.size() > 0) {
-    core.mergeInit();
-    for(auto db_row : block->getRows()) {
-      int orig_x, orig_y;
-      db_row->getOrigin(orig_x, orig_y);
-      odb::Rect row_bbox;
-      db_row->getBBox(row_bbox);
-      core.merge(row_bbox);
-    }
-  }
-  else
-    // Default to die area if there aren't any rows.
-    block->getDieArea(core);
+  block->getCoreArea(core);
   return core;
 }
 

@@ -1,6 +1,6 @@
-# place_fillers for simple01
-source helpers.tcl
-read_lef Nangate45.lef
+# filler_placement for simple01
+source "helpers.tcl"
+read_lef Nangate45/Nangate45.lef
 read_def simple01.def
 detailed_placement
 filler_placement FILL*

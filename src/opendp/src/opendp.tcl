@@ -1,9 +1,9 @@
 #############################################################################
 ##
+## BSD 3-Clause License
+##
 ## Copyright (c) 2019, James Cherry, Parallax Software, Inc.
 ## All rights reserved.
-##
-## BSD 3-Clause License
 ##
 ## Redistribution and use in source and binary forms, with or without
 ## modification, are permitted provided that the following conditions are met:
@@ -54,14 +54,15 @@ proc detailed_placement { args } {
   }
 }
 
-sta::define_cmd_args "set_placement_padding" { [-global]\
+sta::define_cmd_args "set_placement_padding" { -global|-masters masters|-instances insts\
 						 [-right site_count]\
 						 [-left site_count] \
+						 [instances]\
 					       }
 
 proc set_placement_padding { args } {
   sta::parse_key_args "set_placement_padding" args \
-    keys {-right -left} flags {-global}
+    keys {-masters -instances -right -left} flags {-global}
 
   set left 0
   if { [info exists keys(-left)] } {
@@ -73,12 +74,22 @@ proc set_placement_padding { args } {
     set right $keys(-right)
     sta::check_positive_integer "-right" $right
   }
-  set global [info exists flags(-global)]
+
   sta::check_argc_eq0 "set_placement_padding" $args
-  if { $global } {
+  if { [info exists flags(-global)] } {
     opendp::set_padding_global $left $right
-  } else {
-    ord::error "only set_placement_padding -global supported."
+  } elseif { [info exists keys(-masters)] } {
+    set masters [opendp::get_masters_arg "-masters" $keys(-masters)]
+    foreach master $masters {
+      opendp::set_padding_master $master $left $right
+    }
+  } elseif { [info exists keys(-instances)] } {
+    # sta::get_instances_error supports sdc get_cells
+    set insts [sta::get_instances_error "-instances" $keys(-instances)]
+    foreach inst $insts {
+      set db_inst [sta::sta_to_db_inst $inst]
+      opendp::set_padding_inst $db_inst $left $right
+    }
   }
 }
 
@@ -104,8 +115,15 @@ sta::define_cmd_args "filler_placement" { filler_masters }
 
 proc filler_placement { args } {
   sta::check_argc_eq1 "filler_placement" $args
-  set fillers [opendp::get_masters_arg $args]
-  opendp::filler_placement_cmd $fillers
+  set fillers [opendp::get_masters_arg "filler_masters" [lindex $args 0]]
+  if { [llength $fillers] > 0 } {
+    # pass master names for now
+    set filler_names {}
+    foreach filler $fillers {
+      lappend filler_names [$filler getConstName]
+    }
+    opendp::filler_placement_cmd $filler_names
+  }
 }
 
 sta::define_cmd_args "check_placement" {[-verbose]}
@@ -119,23 +137,79 @@ proc check_placement { args } {
   opendp::check_placement_cmd $verbose
 }
 
+sta::define_cmd_args "optimize_mirroring" {}
+
+proc optimize_mirroring { args } {
+  sta::check_argc_eq0 "optimize_mirroring" $args
+  opendp::optimize_mirroring_cmd
+}
+
 namespace eval opendp {
 
-# expand master name regexps
-proc get_masters_arg { master_names } {
-  set db [ord::get_db]
-  set names {}
-  foreach name $master_names {
-    foreach lib [$db getLibs] {
-      foreach master [$lib getMasters] {
-	set master_name [$master getConstName]
-	if { [regexp $name $master_name] } {
-	  lappend names $master_name
+proc get_masters_arg { arg_name arg } {
+  set matched 0
+  set masters {}
+  # Look for liberty cells via get_lib_cells.
+  set cells [sta::get_lib_cells_arg $arg_name $arg sta::warn]
+  if { $cells != {} } {
+    foreach cell $cells {
+      set db_master [sta::sta_to_db_master $cell]
+      lappend masters $db_master
+      set matched 1
+    }
+  } else {
+    # Expand master name regexps
+    set db [ord::get_db]
+    foreach name $arg {
+      foreach lib [$db getLibs] {
+	foreach master [$lib getMasters] {
+	  set master_name [$master getConstName]
+	  if { [regexp $name $master_name] } {
+	    lappend masters $master
+	    set matched 1
+	  }
 	}
       }
     }
   }
-  return $names;
+  if { !$matched } {
+    puts "Warning: $name did not match any masters."
+  }
+  return $masters
+}
+
+proc get_inst_bbox { inst_name } {
+  set block [ord::get_db_block]
+  set inst [$block findInst $inst_name]
+  if { $inst != "NULL" } {
+    set bbox [$inst getBBox]
+    return "[$bbox xMin] [$bbox yMin] [$bbox xMax] [$bbox yMax]"
+  } else {
+    error "cannot find instance $inst_name"
+  }
+}
+
+proc get_inst_grid_bbox { inst_name } {
+  set block [ord::get_db_block]
+  set inst [$block findInst $inst_name]
+  set rows [$block getRows]
+  set site [[lindex $rows 0] getSite]
+  set width [$site getWidth]
+  set height [$site getHeight]
+  if { $inst != "NULL" } {
+    set bbox [$inst getBBox]
+    return "[format_grid [$bbox xMin] $width] [format_grid [$bbox yMin] $height] [format_grid [$bbox xMax] $width] [format_grid [$bbox yMax] $height]"
+  } else {
+    error "cannot find instance $inst_name"
+  }
+}
+
+proc format_grid { x w } {
+  if { [expr $x % $w] == 0 } {
+    return [expr $x / $w]
+  } else {
+    return [format "%.2f" [expr $x / double($w)]]
+  }
 }
 
 }

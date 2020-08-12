@@ -1,9 +1,9 @@
 /////////////////////////////////////////////////////////////////////////////
 //
+// BSD 3-Clause License
+//
 // Copyright (c) 2019, James Cherry, Parallax Software, Inc.
 // All rights reserved.
-//
-// BSD 3-Clause License
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
@@ -36,9 +36,11 @@
  
 %{
 #include "openroad/OpenRoad.hh"
+#include "db_sta/dbNetwork.hh"
 #include "opendp/Opendp.h"
 
 using opendp::StringSeq;
+using sta::Instance;
 
 StringSeq *
 tclListSeqString(Tcl_Obj *const source,
@@ -133,17 +135,28 @@ set_padding_global(int left,
 }
 
 void
+set_padding_master(odb::dbMaster *master,
+		   int left,
+		   int right)
+{
+  opendp::Opendp *opendp = ord::OpenRoad::openRoad()->getOpendp();
+  opendp->setPadding(master, left, right);
+}
+
+void
+set_padding_inst(odb::dbInst *inst,
+		 int left,
+		 int right)
+{
+  opendp::Opendp *opendp = ord::OpenRoad::openRoad()->getOpendp();
+  opendp->setPadding(inst, left, right);
+}
+
+void
 filler_placement_cmd(StringSeq *fillers)
 {
   opendp::Opendp *opendp = ord::OpenRoad::openRoad()->getOpendp();
   opendp->fillerPlacement(fillers);
-}
-
-void
-report_placement_grid()
-{
-  opendp::Opendp *opendp = ord::OpenRoad::openRoad()->getOpendp();
-  opendp->reportGrid();
 }
 
 void
@@ -158,6 +171,13 @@ set_ground_net_name(const char *ground_name)
 {
   opendp::Opendp *opendp = ord::OpenRoad::openRoad()->getOpendp();
   opendp->setGroundNetName(ground_name);
+}
+
+void
+optimize_mirroring_cmd()
+{
+  opendp::Opendp *opendp = ord::OpenRoad::openRoad()->getOpendp();
+  opendp->optimizeMirroring();
 }
 
 %} // inline

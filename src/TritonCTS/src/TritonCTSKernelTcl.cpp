@@ -42,9 +42,19 @@
 
 #include "TritonCTSKernel.h"
 
+// DB includes
+#include "db.h"
+
 #include <iostream>
+#include <iterator>
+#include <sstream>
+#include <vector>
 
 namespace TritonCTS {
+
+void TritonCTSKernel::set_only_characterization(bool enable) {
+        _options.setOnlyCharacterization(enable);
+}
 
 void TritonCTSKernel::set_lut_file(const char* file) {
         _options.setLutFile(file);
@@ -54,8 +64,53 @@ void TritonCTSKernel::set_sol_list_file(const char* file) {
         _options.setSolListFile(file);
 }
 
-void TritonCTSKernel::set_clock_nets(const char* names) {
+int TritonCTSKernel::set_clock_nets(const char* names) {
+        odb::dbDatabase* db    = odb::dbDatabase::getDatabase(_options.getDbId());
+        odb::dbChip* chip  = db->getChip();
+        odb::dbBlock* block = chip->getBlock();
+
         _options.setClockNets(names);
+        std::stringstream ss(names);
+        std::istream_iterator<std::string> begin(ss);
+        std::istream_iterator<std::string> end;
+        std::vector<std::string> nets(begin, end);
+
+        std::vector<odb::dbNet*> netObjects;
+
+        for (std::string name : nets){
+                odb::dbNet* net = block->findNet(name.c_str());
+                bool netFound = false;
+                if (net != nullptr) {
+                        //Since a set is unique, only the nets not found by dbSta are added.
+                        netObjects.push_back(net);
+                        netFound = true;
+                } else {
+                        //User input was a pin, transform it into an iterm if possible
+                        odb::dbITerm* iterm = block->findITerm(name.c_str());
+                        if (iterm != nullptr) {
+                                net = iterm->getNet();
+                                 if (net != nullptr) {
+                                        //Since a set is unique, only the nets not found by dbSta are added.
+                                        netObjects.push_back(net);
+                                        netFound = true;
+                                }
+                        }
+                        
+                }
+                if (!netFound) {
+                        return 1;
+                }
+        }
+        _options.setClockNetsObjs(netObjects);
+        return 0;
+}
+
+void TritonCTSKernel::set_max_char_cap(double cap) {
+        _options.setMaxCharCap(cap);
+}
+
+void TritonCTSKernel::set_max_char_slew(double slew) {
+        _options.setMaxCharSlew(slew);
 }
 
 void TritonCTSKernel::set_wire_segment_distance_unit(unsigned unit) {
@@ -80,6 +135,34 @@ void TritonCTSKernel::export_characterization(const char* file) {
 
 void TritonCTSKernel::set_root_buffer(const char* buffer) {
         _options.setRootBuffer(buffer);
+}
+
+void TritonCTSKernel::set_buffer_list(const char* buffers) {
+        std::stringstream ss(buffers);
+        std::istream_iterator<std::string> begin(ss);
+        std::istream_iterator<std::string> end;
+        std::vector<std::string> bufferVector(begin, end);
+        _options.setBufferList(bufferVector);
+}
+
+void TritonCTSKernel::set_out_path(const char* path) {
+        _options.setOutputPath(path);
+}
+
+void TritonCTSKernel::set_cap_per_sqr(double cap) {
+        _options.setCapPerSqr(cap);
+}
+
+void TritonCTSKernel::set_res_per_sqr(double res) {
+        _options.setResPerSqr(res);
+}
+
+void TritonCTSKernel::set_slew_inter(double slew){
+         _options.setSlewInter(slew);
+}
+
+void TritonCTSKernel::set_cap_inter(double cap){
+        _options.setCapInter(cap);
 }
 
 }

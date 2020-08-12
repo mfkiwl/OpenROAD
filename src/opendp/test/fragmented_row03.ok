@@ -1,8 +1,8 @@
-Notice 0: Reading LEF file:  Nangate45.lef
+Notice 0: Reading LEF file:  Nangate45/Nangate45.lef
 Notice 0:     Created 22 technology layers
 Notice 0:     Created 27 technology vias
 Notice 0:     Created 134 library cells
-Notice 0: Finished LEF file:  Nangate45.lef
+Notice 0: Finished LEF file:  Nangate45/Nangate45.lef
 Notice 0: 
 Reading DEF file: fragmented_row03.def
 Notice 0: Design: single_cell
@@ -14,13 +14,14 @@ Warning: could not find power special net
 Design Stats
 --------------------------------
 total instances             1
-multi instances             0
+multi row instances         0
 fixed instances             0
 nets                        2
 design area               4.8 u^2
 fixed area                0.0 u^2
 movable area              1.9 u^2
 utilization                39 %
+utilization padded         39 %
 rows                        1
 row height                1.4 u
 
@@ -30,10 +31,12 @@ Placement Analysis
 total displacement        0.0 u
 average displacement      0.0 u
 max displacement          0.0 u
-original HPWL            61.0 u
-legalized HPWL           61.0 u
+original HPWL            61.5 u
+legalized HPWL           61.5 u
 delta HPWL                  0 %
 
+Warning: Placed in rows check failed (1).
+ _277_
 Warning: Site check failed (1).
  _277_
 No differences found.

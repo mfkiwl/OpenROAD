@@ -12,6 +12,7 @@ Notice 0:     Created 385 nets and 1110 connections.
 Notice 0: Finished DEF file: gcd/floorplan.def
 [INFO] [PDNG-0016] Power Delivery Network Generator: Generating PDN
 [INFO] [PDNG-0016]   config: gcd/PDN.cfg
+[WARN] [PDNG-0035] No track information found for layer metal10
 [INFO] [PDNG-0008] Design Name is gcd
 [INFO] [PDNG-0009] Reading technology data
 [INFO] [PDNG-0011] ****** INFO ******
@@ -25,13 +26,13 @@ Type: stdcell, grid
 Type: macro, macro_1
     Macro orientation: R0 R180 MX MY
     Straps
-      Layer: metal5 -  width: 0.930  pitch: 40.000  offset: 2.000 
-      Layer: metal6 -  width: 0.930  pitch: 40.000  offset: 2.000 
+      Layer: metal5 -  width: 0.930  pitch: 10.000  offset: 2.000 
+      Layer: metal6 -  width: 0.930  pitch: 10.000  offset: 2.000 
     Connect: {metal4_PIN_ver metal5} {metal5 metal6} {metal6 metal7}
 Type: macro, macro_2
     Macro orientation: R90 R270 MXR90 MYR90
     Straps
-      Layer: metal6 -  width: 0.930  pitch: 40.000  offset: 2.000 
+      Layer: metal6 -  width: 0.930  pitch: 10.000  offset: 2.000 
     Connect: {metal4_PIN_hor metal6} {metal6 metal7}
 [INFO] [PDNG-0012] **** END INFO ****
 [INFO] [PDNG-0013] Inserting stdcell grid - grid

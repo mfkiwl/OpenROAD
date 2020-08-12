@@ -1,19 +1,43 @@
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-// 
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-// 
-// You should have received a copy of the GNU General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+/////////////////////////////////////////////////////////////////////////////
+//
+// BSD 3-Clause License
+//
+// Copyright (c) 2019, James Cherry, Parallax Software, Inc.
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+// * Redistributions of source code must retain the above copyright notice, this
+//   list of conditions and the following disclaimer.
+//
+// * Redistributions in binary form must reproduce the above copyright notice,
+//   this list of conditions and the following disclaimer in the documentation
+//   and/or other materials provided with the distribution.
+//
+// * Neither the name of the copyright holder nor the names of its
+//   contributors may be used to endorse or promote products derived from
+//   this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+// POSSIBILITY OF SUCH DAMAGE.
+//
+///////////////////////////////////////////////////////////////////////////////
 
 #pragma once
 
 #include <string>
+#include <set>
+#include "Version.hh"
 
 extern "C" {
 struct Tcl_Interp;
@@ -22,6 +46,8 @@ struct Tcl_Interp;
 namespace odb {
 class dbDatabase;
 class dbBlock;
+class dbTech;
+class dbLib;
 class Point;
 class Rect;
 }
@@ -85,11 +111,11 @@ class dbVerilogNetwork;
 // Only pointers to components so the header has no dependents.
 class OpenRoad
 {
-public:
   OpenRoad();
   ~OpenRoad();
+public:
   // Singleton accessor used by tcl command interpreter.
-  static OpenRoad *openRoad() { return openroad_; }
+  static OpenRoad *openRoad();
   void init(Tcl_Interp *tcl_interp);
 
   Tcl_Interp *tclInterp() { return tcl_interp_; }
@@ -105,6 +131,8 @@ public:
   OpenRCX::Ext *getOpenRCX() { return extractor_; }
   replace::Replace* getReplace() { return replace_; }
   pdnsim::PDNSim* getPDNSim() { return pdnsim_; }
+  FastRoute::FastRouteKernel* getFastRoute() { return fastRoute_; }
+
   tool::Tool *getTool(){ return tool_; }
 
   // Return the bounding box of the db rows.
@@ -117,7 +145,8 @@ public:
 	       bool make_library);
 
   void readDef(const char *filename,
-               bool order_wires);
+               bool order_wires,
+               bool continue_on_errors);
   void writeDef(const char *filename,
 		// major.minor (avoid including defout.h)
 		string version);
@@ -130,6 +159,25 @@ public:
 
   void readDb(const char *filename);
   void writeDb(const char *filename);
+
+  // Observer interface
+  class Observer
+  {
+  public:
+    virtual ~Observer();
+
+    // Either pointer could be null
+    virtual void postReadLef(odb::dbTech* tech, odb::dbLib* library) = 0;
+    virtual void postReadDef(odb::dbBlock* block) = 0;
+    virtual void postReadDb(odb::dbDatabase* db) = 0;
+
+  private:
+    OpenRoad* owner_ = nullptr;
+    friend class OpenRoad;
+  };
+
+  void addObserver(Observer *observer);
+  void removeObserver(Observer *observer);
 
 private:
   Tcl_Interp *tcl_interp_;
@@ -144,10 +192,14 @@ private:
   TritonCTS::TritonCTSKernel *tritonCts_;
   tapcell::Tapcell *tapcell_;
   OpenRCX::Ext *extractor_;
+#ifdef BUILD_OPENPHYSYN
   psn::Psn *psn_;
+#endif
   replace::Replace *replace_;
   pdnsim::PDNSim *pdnsim_; 
   tool::Tool *tool_;
+
+  std::set<Observer *> observers_;
 
   // Singleton used by tcl command interpreter.
   static OpenRoad *openroad_;

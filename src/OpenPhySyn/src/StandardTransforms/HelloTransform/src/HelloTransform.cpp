@@ -31,11 +31,12 @@
 #ifdef OPENPHYSYN_TRANSFORM_HELLO_TRANSFORM_ENABLED
 
 #include "HelloTransform.hpp"
-#include <OpenPhySyn/PsnLogger.hpp>
 #include <algorithm>
 #include <cmath>
+#include "OpenPhySyn/PsnLogger.hpp"
 
-using namespace psn;
+namespace psn
+{
 
 int
 HelloTransform::addWire(Psn* psn_inst, std::string name)
@@ -49,16 +50,10 @@ int
 HelloTransform::run(Psn* psn_inst, std::vector<std::string> args)
 {
 
-    PSN_LOG_DEBUG("Passed arguments:");
-    for (auto& arg : args)
-    {
-        PSN_LOG_DEBUG("{}", arg);
-    }
-
     if (args.size() == 1)
     {
         std::string net_name = args[0];
-        PSN_LOG_INFO("Adding random wire {}", net_name);
+        PSN_LOG_INFO("Adding random wire", net_name);
         return addWire(psn_inst, net_name);
     }
     else
@@ -74,4 +69,6 @@ DEFINE_TRANSFORM_VIRTUALS(
     "Hello transform, a toy transform that adds an unconnected net",
     "Usage:\n transform hello_transform "
     "<net_name>\n")
+
+} // namespace psn
 #endif

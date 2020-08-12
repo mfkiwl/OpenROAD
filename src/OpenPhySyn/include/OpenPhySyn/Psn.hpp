@@ -29,20 +29,18 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef __PSN_PSN__
-#define __PSN_PSN__
-#include <OpenPhySyn/DatabaseHandler.hpp>
-#include <OpenPhySyn/DesignSettings.hpp>
-#include <OpenPhySyn/LogLevel.hpp>
-#include <OpenPhySyn/PsnTransform.hpp>
-#include <OpenPhySyn/TransformInfo.hpp>
-#include <OpenPhySyn/Types.hpp>
-#include <OpenSTA/network/ConcreteNetwork.hh>
+#pragma once
+
+#include "OpenPhySyn/PsnTransform.hpp"
+#include "OpenPhySyn/TransformInfo.hpp"
+#include "OpenPhySyn/Types.hpp"
 
 #include <unordered_map>
 
+class Tcl_Interp;
 namespace psn
 {
+enum class LogLevel;
 class Psn
 {
 public:
@@ -69,7 +67,6 @@ public:
     virtual int  setWireRC(const char* layer_name);
 
     virtual DatabaseHandler* handler() const;
-    virtual DesignSettings*  settings() const;
 
     virtual void printVersion(bool raw_str = false);
     virtual void printUsage(bool raw_str = false, bool print_transforms = true,
@@ -92,14 +89,10 @@ public:
 
 private:
     Psn(DatabaseSta* sta = nullptr);
-    DesignSettings*  settings_;
     DatabaseSta*     sta_;
     Database*        db_;
     DatabaseHandler* db_handler_;
     std::string      exec_path_;
-
-    int initializeDatabase();
-    int initializeSta(Tcl_Interp* interp = nullptr);
 
     std::unordered_map<std::string, std::shared_ptr<PsnTransform>> transforms_;
     std::unordered_map<std::string, TransformInfo> transforms_info_;
@@ -108,4 +101,3 @@ private:
     static bool                                    is_initialized_;
 };
 } // namespace psn
-#endif

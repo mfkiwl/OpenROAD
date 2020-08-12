@@ -14,8 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-#ifndef DB_READ_VERILOG_H
-#define DB_READ_VERILOG_H
+#pragma once
 
 namespace odb {
 class dbDatabase;
@@ -28,6 +27,7 @@ class NetworkReader;
 namespace ord {
 
 class dbVerilogNetwork;
+class OpenRoad;
 
 using odb::dbDatabase;
 using sta::NetworkReader;
@@ -55,4 +55,3 @@ dbLinkDesign(const char *top_cell_name,
 	     dbDatabase *db);
 
 } // namespace
-#endif

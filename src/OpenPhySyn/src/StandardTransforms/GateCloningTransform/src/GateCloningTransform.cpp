@@ -32,16 +32,13 @@
 #ifdef OPENPHYSYN_TRANSFORM_GATE_CLONE_ENABLED
 
 #include "GateCloningTransform.hpp"
-#include <OpenPhySyn/PsnGlobal.hpp>
-#include <OpenPhySyn/PsnLogger.hpp>
-#include <OpenPhySyn/StringUtils.hpp>
+#include "OpenPhySyn/DatabaseHandler.hpp"
+#include "OpenPhySyn/Psn.hpp"
+#include "OpenPhySyn/PsnGlobal.hpp"
+#include "OpenPhySyn/StringUtils.hpp"
 
-#include <algorithm>
-#include <cmath>
-#include <limits>
-#include <sstream>
-
-using namespace psn;
+namespace psn
+{
 
 GateCloningTransform::GateCloningTransform() : net_index_(0), clone_index_(0)
 {
@@ -52,7 +49,7 @@ GateCloningTransform::gateClone(Psn* psn_inst, float cap_factor,
 {
     clone_count_             = 0;
     DatabaseHandler& handler = *(psn_inst->handler());
-    PSN_LOG_DEBUG("Clone {} {}", cap_factor, clone_largest_only);
+    PSN_LOG_DEBUG("Clone", cap_factor, clone_largest_only);
     std::vector<InstanceTerm*> level_drvrs = handler.levelDriverPins();
     for (auto& pin : level_drvrs)
     {
@@ -65,9 +62,9 @@ void
 GateCloningTransform::cloneTree(Psn* psn_inst, Instance* inst, float cap_factor,
                                 bool clone_largest_only)
 {
-    DatabaseHandler& handler = *(psn_inst->handler());
-    float cap_per_micron     = psn_inst->settings()->capacitancePerMicron();
-    
+    DatabaseHandler& handler        = *(psn_inst->handler());
+    float            cap_per_micron = handler.capacitancePerMicron();
+
     auto output_pins = handler.outputPins(inst);
     if (!output_pins.size())
     {
@@ -91,24 +88,12 @@ GateCloningTransform::cloneTree(Psn* psn_inst, Instance* inst, float cap_factor,
     float output_target_load = handler.targetLoad(cell);
 
     float c_limit = cap_factor * output_target_load;
-    PSN_LOG_TRACE("{} {} output_target_load: {}", handler.name(inst),
-                  handler.name(cell), output_target_load);
-    PSN_LOG_TRACE("{} {} cap_per_micron: {}", handler.name(inst),
-                  handler.name(cell), cap_per_micron);
-    PSN_LOG_TRACE("{} {} c_limit: {}", handler.name(inst), handler.name(cell),
-                  c_limit);
-    PSN_LOG_TRACE("{} {} total_net_load: {}", handler.name(inst),
-                  handler.name(cell), total_net_load);
     if ((c_limit - total_net_load) > std::numeric_limits<float>::epsilon())
     {
-        PSN_LOG_TRACE("{} {} load is fine", handler.name(inst),
-                      handler.name(cell));
         return;
     }
     if (clone_largest_only && cell != handler.largestLibraryCell(cell))
     {
-        PSN_LOG_TRACE("{} {} is not the largest cell", handler.name(inst),
-                      handler.name(cell));
         return;
     }
 
@@ -127,8 +112,8 @@ GateCloningTransform::topDownClone(psn::Psn*                          psn_inst,
                                    std::unique_ptr<psn::SteinerTree>& tree,
                                    psn::SteinerPoint k, float c_limit)
 {
-    DatabaseHandler& handler = *(psn_inst->handler());
-    float cap_per_micron     = psn_inst->settings()->capacitancePerMicron();
+    DatabaseHandler& handler        = *(psn_inst->handler());
+    float            cap_per_micron = handler.capacitancePerMicron();
 
     SteinerPoint drvr = tree->driverPoint();
 
@@ -221,7 +206,7 @@ GateCloningTransform::cloneInstance(psn::Psn*                          psn_inst,
     {
         std::string instance_name = makeUniqueCloneName(psn_inst);
         auto        cell          = handler.libraryCell(inst);
-        Instance* cloned_inst =
+        Instance*   cloned_inst =
             handler.createInstance(instance_name.c_str(), cell);
         handler.setLocation(cloned_inst, handler.location(output_pin));
         handler.connect(clone_net, cloned_inst, output_port);
@@ -300,7 +285,8 @@ GateCloningTransform::run(Psn* psn_inst, std::vector<std::string> args)
 }
 
 DEFINE_TRANSFORM_VIRTUALS(GateCloningTransform, "gate_clone", "1.0.0",
-                 "Performs load-driven gate cloning",
-                 "Usage: transform gate_clone "
-                 "<float: max-cap-factor> <boolean: clone-gates-only>")
+                          "Performs load-driven gate cloning",
+                          "Usage: transform gate_clone "
+                          "<float: max-cap-factor> <boolean: clone-gates-only>")
+} // namespace psn
 #endif

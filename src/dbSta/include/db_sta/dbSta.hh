@@ -14,11 +14,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-#ifndef DB_STA_H
-#define DB_STA_H
+#pragma once
 
 #include "opendb/db.h"
-#include "Sta.hh"
+#include "sta/Sta.hh"
+#include "openroad/OpenRoad.hh"
 
 namespace sta {
 
@@ -28,8 +28,10 @@ using odb::dbDatabase;
 using odb::dbLib;
 using odb::dbNet;
 using odb::dbBlock;
+using odb::dbTech;
+using odb::dbLib;
 
-class dbSta : public Sta
+class dbSta : public Sta, public ord::OpenRoad::Observer
 {
 public:
   dbSta();
@@ -37,23 +39,29 @@ public:
 	    dbDatabase *db);
 
   dbDatabase *db() { return db_; }
-  virtual void makeComponents();
+  virtual void makeComponents() override;
   dbNetwork *getDbNetwork() { return db_network_; }
-  void readLefAfter(dbLib *lib);
-  void readDefAfter();
-  void readDbAfter();
+
   virtual LibertyLibrary *readLiberty(const char *filename,
 				      Corner *corner,
 				      const MinMaxAll *min_max,
-				      bool infer_latches);
+				      bool infer_latches) override;
 
   Slack netSlack(const dbNet *net,
 		 const MinMax *min_max);
   using Sta::netSlack;
 
+  // From ord::OpenRoad::Observer
+  virtual void postReadLef(odb::dbTech* tech, odb::dbLib* library) override;
+  virtual void postReadDef(odb::dbBlock* block) override;
+  virtual void postReadDb(odb::dbDatabase* db) override;
+
+  // Find clock nets connected by combinational gates from the clock roots. 
+  void findClkNets(std::set<dbNet*> &clk_nets);
+
 protected:
-  virtual void makeNetwork();
-  virtual void makeSdcNetwork();
+  virtual void makeNetwork() override;
+  virtual void makeSdcNetwork() override;
 
   dbDatabase *db_;
   dbNetwork *db_network_;
@@ -63,4 +71,3 @@ dbSta *
 makeBlockSta(dbBlock *block);
 
 } // namespace
-#endif

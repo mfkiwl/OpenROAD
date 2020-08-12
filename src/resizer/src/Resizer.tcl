@@ -1,23 +1,39 @@
-# Resizer, LEF/DEF gate resizer
-# Copyright (c) 2019, Parallax Software, Inc.
-# 
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-# 
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-# 
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+############################################################################
+##
+## BSD 3-Clause License
+##
+## Copyright (c) 2019, James Cherry, Parallax Software, Inc.
+## All rights reserved.
+##
+## Redistribution and use in source and binary forms, with or without
+## modification, are permitted provided that the following conditions are met:
+##
+## * Redistributions of source code must retain the above copyright notice, this
+##   list of conditions and the following disclaimer.
+##
+## * Redistributions in binary form must reproduce the above copyright notice,
+##   this list of conditions and the following disclaimer in the documentation
+##   and/or other materials provided with the distribution.
+##
+## * Neither the name of the copyright holder nor the names of its
+##   contributors may be used to endorse or promote products derived from
+##   this software without specific prior written permission.
+##
+## THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+## AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+## IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+## ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+## LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+## CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+## SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+## INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+## CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+## ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+## POSSIBILITY OF SUCH DAMAGE.
+##
+############################################################################
 
 namespace eval sta {
-
-# Defined by SWIG interface Resizer.i.
-define_cmd_args "set_dont_use" {cell dont_use}
 
 define_cmd_args "set_wire_rc" {[-layer layer_name]\
 				 [-resistance res ][-capacitance cap]\
@@ -40,14 +56,15 @@ proc set_wire_rc { args } {
     if { $layer == "NULL" } {
       sta_error "layer $layer_name not found."
     }
-    set layer_width [ord::dbu_to_microns [$layer getWidth]]
-    set res_ohm_per_micron [expr [$layer getResistance] / $layer_width]
-    set cap_pf_per_micron [expr [ord::dbu_to_microns 1] * $layer_width \
-			     * [$layer getCapacitance] \
+    set layer_width_dbu [$layer getWidth]
+    set layer_width_micron [ord::dbu_to_microns $layer_width_dbu]
+    set res_ohm_per_micron [expr [$layer getResistance] / $layer_width_micron]
+    set cap_pf_per_dbu [expr $layer_width_dbu * [$layer getCapacitance] \
 			     + [$layer getEdgeCapacitance] * 2]
-    # ohms/sq
+    set cap_pf_per_micron [expr [ord::dbu_to_microns 1] * $cap_pf_per_dbu]
+    # ohms/meter
     set wire_res [expr $res_ohm_per_micron * 1e+6]
-    # F/m^2
+    # farads/meter
     set wire_cap [expr $cap_pf_per_micron * 1e-12 * 1e+6]
   } else {
     ord::ensure_units_initialized
@@ -70,78 +87,39 @@ proc set_wire_rc { args } {
   set_wire_rc_cmd $wire_res $wire_cap $corner
 }
 
-define_cmd_args "resize" {[-buffer_inputs]\
-			    [-buffer_outputs]\
-			    [-resize]\
-			    [-repair_max_cap]\
-			    [-repair_max_slew]\
-			    [-resize_libraries resize_libs]\
-			    [-buffer_cell buffer_cell]\
-			    [-dont_use lib_cells]\
+define_cmd_args "set_dont_use" {lib_cells}
+
+proc set_dont_use { args } {
+  check_argc_eq1 "set_dont_use" $args
+  set_dont_use_cmd [get_lib_cells_arg "-dont_use" [lindex $args 0] sta_warn]
+}
+
+define_cmd_args "resize" {[-libraries resize_libs]\
 			    [-max_utilization util]}
 
 proc resize { args } {
   parse_key_args "resize" args \
-    keys {-buffer_cell -resize_libraries -dont_use -max_utilization} \
-    flags {-buffer_inputs -buffer_outputs -resize -repair_max_cap -repair_max_slew}
+    keys {-libraries -dont_use} flags {}
 
-  set buffer_inputs [info exists flags(-buffer_inputs)]
-  if { $buffer_inputs } {
-    ord::warn "resize -buffer_inputs is deprecated. Use the buffer_ports command."
-  }
-  set buffer_outputs [info exists flags(-buffer_outputs)]
-  if { $buffer_outputs } {
-    ord::warn "resize -buffer_outputs is deprecated. Use the buffer_ports command."
-  }
-  set resize [info exists flags(-resize)]
-  set repair_max_cap [info exists flags(-repair_max_cap)]
-  if { $repair_max_cap } {
-    ord::warn "resize -repair_max_cap is deprecated. Use the repair_max_cap command."
-  }
-  set repair_max_slew [info exists flags(-repair_max_slew)]
-  if { $repair_max_slew } {
-    ord::warn "resize -repair_max_slew is deprecated. Use the repair_max_slew command."
-  }
-  # With no options you get the whole salmai.
-  if { !($buffer_inputs || $buffer_outputs || $resize \
-	   || $repair_max_cap || $repair_max_slew) } {
-    set buffer_inputs 1
-    set buffer_outputs 1
-    set resize 1
-    set repair_max_cap 1
-    set repair_max_slew 1
-  }
-  set buffer_cell [parse_buffer_cell keys [expr $buffer_inputs || $buffer_outputs \
-					     || $repair_max_cap || $repair_max_slew]]
-  if { [info exists keys(-resize_libraries)] } {
-    set resize_libs [get_liberty_error "-resize_libraries" $keys(-resize_libraries)]
+  if { [info exists keys(-libraries)] } {
+    set resize_libs [get_liberty_error "-libraries" $keys(-libraries)]
   } else {
     set resize_libs [get_libs *]
+    if { $resize_libs == {} } {
+      sta_error "No liberty libraries found."
+    }
   }
 
-  set dont_use {}
   if { [info exists keys(-dont_use)] } {
-    set dont_use [get_lib_cells -quiet $keys(-dont_use)]
+    sta::sta_warn "resize -dont_use is deprecated. Use the set_dont_use commands instead."
+    set dont_use [get_lib_cells_arg "-dont_use" $keys(-dont_use) sta_warn]
+    set_dont_use $dont_use
   }
-  set_dont_use $dont_use
-  set_max_utilization [parse_max_util keys]
 
   check_argc_eq0 "resize" $args
 
   resizer_preamble $resize_libs
-
-  if { $buffer_inputs } {
-    buffer_inputs $buffer_cell
-  }
-  if { $buffer_outputs } {
-    buffer_outputs $buffer_cell
-  }
-  if { $resize } {
-    resize_to_target_slew
-  }
-  if { $repair_max_cap || $repair_max_slew } {
-    repair_max_slew_cap $repair_max_cap $repair_max_slew $buffer_cell
-  }
+  resize_to_target_slew
 }
 
 proc parse_max_util { keys_var } {
@@ -212,30 +190,34 @@ define_cmd_args "repair_max_cap" {-buffer_cell buffer_cell\
 				    [-max_utilization util]}
 
 proc repair_max_cap { args } {
-  repair_max_cap_slew "repair_max_cap" $args 1 0
-}
-
-define_cmd_args "repair_max_slew" {-buffer_cell buffer_cell\
-				    [-max_utilization util]}
-
-proc repair_max_slew { args } {
-  repair_max_cap_slew "repair_max_slew" $args 0 1
-}
-
-
-proc repair_max_cap_slew { cmd cmd_args repair_max_cap repair_max_slew } {
-  parse_key_args "repair_max_slew" cmd_args \
+  parse_key_args "repair_max_cap" args \
     keys {-buffer_cell -max_utilization} \
     flags {}
 
   set buffer_cell [parse_buffer_cell keys 1]
   set_max_utilization [parse_max_util keys]
 
-  check_argc_eq0 $cmd $cmd_args
+  check_argc_eq0 "repair_max_cap" $args
 
-  # init target slews
   resizer_preamble [get_libs *]
-  repair_max_slew_cap $repair_max_cap $repair_max_slew $buffer_cell
+  repair_max_cap_cmd $buffer_cell
+}
+
+define_cmd_args "repair_max_slew" {-buffer_cell buffer_cell\
+				     [-max_utilization util]}
+
+proc repair_max_slew { args } {
+  parse_key_args "repair_max_slew" args \
+    keys {-buffer_cell -max_utilization} \
+    flags {}
+
+  set buffer_cell [parse_buffer_cell keys 1]
+  set_max_utilization [parse_max_util keys]
+
+  check_argc_eq0 "repair_max_slew" $args
+
+  resizer_preamble [get_libs *]
+  repair_max_slew_cmd $buffer_cell
 }
 
 define_cmd_args "repair_max_fanout" {-max_fanout fanout\

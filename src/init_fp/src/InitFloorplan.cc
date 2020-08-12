@@ -1,27 +1,46 @@
-// Copyright (c) 2019, Parallax Software, Inc.
-// 
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-// 
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-// 
-// You should have received a copy of the GNU General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+/////////////////////////////////////////////////////////////////////////////
+//
+// BSD 3-Clause License
+//
+// Copyright (c) 2019, James Cherry, Parallax Software, Inc.
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+// * Redistributions of source code must retain the above copyright notice, this
+//   list of conditions and the following disclaimer.
+//
+// * Redistributions in binary form must reproduce the above copyright notice,
+//   this list of conditions and the following disclaimer in the documentation
+//   and/or other materials provided with the distribution.
+//
+// * Neither the name of the copyright holder nor the names of its
+//   contributors may be used to endorse or promote products derived from
+//   this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+// POSSIBILITY OF SUCH DAMAGE.
+//
+///////////////////////////////////////////////////////////////////////////////
 
 #include <iostream>
 #include <fstream>
 #include <cmath>
-#include "Machine.hh"
-#include "Error.hh"
-#include "Report.hh"
-#include "StringUtil.hh"
-#include "Vector.hh"
-#include "PortDirection.hh"
+#include "sta/Error.hh"
+#include "sta/Report.hh"
+#include "sta/StringUtil.hh"
+#include "sta/Vector.hh"
+#include "sta/PortDirection.hh"
 #include "opendb/db.h"
 #include "opendb/dbTransform.h"
 #include "openroad/OpenRoad.hh"
@@ -91,12 +110,16 @@ class InitFloorplan
 public:
   InitFloorplan() {}
   void initFloorplan(double util,
-		     double aspect_ratio,
-		     double core_space,
-		     const char *site_name,
-		     const char *tracks_file,
-		     dbDatabase *db,
-		     Report *report);
+         double aspect_ratio,
+         double core_space_bottom,
+         double core_space_top,
+         double core_space_left,
+         double core_space_right,
+         const char *site_name,
+         const char *tracks_file,
+         dbDatabase *db,
+         Report *report);
+
   void initFloorplan(double die_lx,
 		     double die_ly,
 		     double die_ux,
@@ -109,6 +132,7 @@ public:
 		     const char *tracks_file,
 		     dbDatabase *db,
 		     Report *report);
+
   void autoPlacePins(const char *pin_layer_name,
 		     dbDatabase *db,
 		     Report *report);
@@ -149,16 +173,21 @@ protected:
 void
 initFloorplan(double util,
 	      double aspect_ratio,
-	      double core_space,
+	      double core_space_bottom,
+	      double core_space_top,
+	      double core_space_left,
+	      double core_space_right,
 	      const char *site_name,
 	      const char *tracks_file,
 	      dbDatabase *db,
 	      Report *report)
 {
   InitFloorplan init_fp;
-  init_fp.initFloorplan(util, aspect_ratio, core_space,
-			site_name, tracks_file,
-			db, report);
+  init_fp.initFloorplan(util, aspect_ratio,
+                        core_space_bottom, core_space_top,
+                        core_space_left, core_space_right,
+                        site_name, tracks_file,
+                        db, report);
 }
 
 void
@@ -185,7 +214,10 @@ initFloorplan(double die_lx,
 void
 InitFloorplan::initFloorplan(double util,
 			     double aspect_ratio,
-			     double core_space,
+			     double core_space_bottom,
+			     double core_space_top,
+			     double core_space_left,
+			     double core_space_right,
 			     const char *site_name,
 			     const char *tracks_file,
 			     dbDatabase *db,
@@ -203,14 +235,14 @@ InitFloorplan::initFloorplan(double util,
       double core_width = std::sqrt(core_area / aspect_ratio);
       double core_height = core_width * aspect_ratio;
 
-      double core_lx = core_space;
-      double core_ly = core_space;
+      double core_lx = core_space_left;
+      double core_ly = core_space_bottom;
       double core_ux = core_lx + core_width;
       double core_uy = core_ly + core_height;
       double die_lx = 0.0;
       double die_ly = 0.0;
-      double die_ux = core_width + core_space * 2.0;
-      double die_uy = core_height + core_space * 2.0;
+      double die_ux = core_width + core_space_left + core_space_right ;
+      double die_uy = core_height + core_space_top + core_space_bottom;
       initFloorplan(die_lx, die_ly, die_ux, die_uy,
 		    core_lx, core_ly, core_ux, core_uy,
 		    site_name, tracks_file);
@@ -361,12 +393,12 @@ InitFloorplan::makeTracks(const char *tracks_file,
       switch (dir) {
       case 'X':
 	width = die_area.dx();
-	track_count = (width - offset) / pitch;
+	track_count = (width - offset) / pitch + 1;
 	grid->addGridPatternX(die_area.xMin() + offset, track_count, pitch);
 	break;
       case 'Y':
 	width = die_area.dy();
-	track_count = (width - offset) / pitch;
+	track_count = (width - offset) / pitch + 1;
 	grid->addGridPatternY(die_area.yMin() + offset, track_count, pitch);
 	break;
       default:
@@ -440,7 +472,7 @@ InitFloorplan::makeTracks(Rect &die_area)
       uint width;
       int offset, pitch, track_count;
       switch (layer_dir) {
-      case dbTechLayerDir::HORIZONTAL:
+      case dbTechLayerDir::VERTICAL:
 	grid = dbTrackGrid::create(block_, layer);
 	width = die_area.dx();
 	pitch = layer->getPitchX();
@@ -454,7 +486,7 @@ InitFloorplan::makeTracks(Rect &die_area)
 	else
 	  printf("Error: layer %s has zero pitch.\n", layer->getConstName());
 	break;
-      case dbTechLayerDir::VERTICAL:
+      case dbTechLayerDir::HORIZONTAL:
 	grid = dbTrackGrid::create(block_, layer);
 	width = die_area.dy();
 	pitch = layer->getPitchY();

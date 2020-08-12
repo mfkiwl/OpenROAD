@@ -1,25 +1,47 @@
-// Resizer, LEF/DEF gate resizer
-// Copyright (c) 2019, Parallax Software, Inc.
-// 
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-// 
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-// 
-// You should have received a copy of the GNU General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+/////////////////////////////////////////////////////////////////////////////
+//
+// BSD 3-Clause License
+//
+// Copyright (c) 2019, James Cherry, Parallax Software, Inc.
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+// * Redistributions of source code must retain the above copyright notice, this
+//   list of conditions and the following disclaimer.
+//
+// * Redistributions in binary form must reproduce the above copyright notice,
+//   this list of conditions and the following disclaimer in the documentation
+//   and/or other materials provided with the distribution.
+//
+// * Neither the name of the copyright holder nor the names of its
+//   contributors may be used to endorse or promote products derived from
+//   this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+// POSSIBILITY OF SUCH DAMAGE.
+//
+///////////////////////////////////////////////////////////////////////////////
 
 #pragma once
 
+#include <array>
 #include "db_sta/dbSta.hh"
 #include "SteinerTree.hh"
 
 namespace sta {
+
+using std::array;
 
 using odb::Rect;
 
@@ -30,6 +52,8 @@ typedef Vector<RebufferOption*> RebufferOptionSeq;
 enum class RebufferOptionType { sink, junction, wire, buffer };
 typedef Map<Vertex*, float> VertexWeightMap;
 typedef Vector<Vector<Pin*>> GroupedPins;
+typedef array<Required, RiseFall::index_count> Requireds;
+typedef array<Slew,  RiseFall::index_count> TgtSlews;
 
 class Resizer : public StaState
 {
@@ -66,11 +90,12 @@ public:
   // resizerPreamble() required.
   void resizeToTargetSlew(Instance *inst);
 
-  // Insert buffers to fix max cap/slew violations.
+  // Insert buffers to fix max cap violations.
   // resizerPreamble() required.
-  void repairMaxCapSlew(bool repair_max_cap,
-			bool repair_max_slew,
-			LibertyCell *buffer_cell);
+  void repairMaxCap(LibertyCell *buffer_cell);
+  // Insert buffers to fix max slew violations.
+  // resizerPreamble() required.
+  void repairMaxSlew(LibertyCell *buffer_cell);
   void repairMaxFanout(int max_fanout,
 		       LibertyCell *buffer_cell);
   // Rebuffer net (for testing).
@@ -113,9 +138,9 @@ protected:
   void makeEquivCells(LibertyLibrarySeq *resize_libs);
   void findTargetLoads(LibertyLibrarySeq *resize_libs);
   void findTargetLoads(LibertyLibrary *library,
-		       Slew slews[]);
+		       TgtSlews &slews);
   void findTargetLoad(LibertyCell *cell,
-		      Slew slews[]);
+		      TgtSlews &slews);
   float findTargetLoad(LibertyCell *cell,
 		       TimingArc *arc,
 		       Slew in_slew,
@@ -167,14 +192,17 @@ protected:
   float portCapacitance(const LibertyPort *port);
   float pinCapacitance(const Pin *pin);
   float bufferInputCapacitance(LibertyCell *buffer_cell);
-  Required pinRequired(const Pin *pin);
+  Requireds pinRequireds(const Pin *pin);
   float gateDelay(LibertyPort *out_port,
+		  RiseFall *rf,
 		  float load_cap);
   float bufferDelay(LibertyCell *buffer_cell,
+		    RiseFall *rf,
 		    float load_cap);
   string makeUniqueNetName();
-  string makeUniqueBufferName();
   string makeUniqueInstName(const char *base_name);
+  string makeUniqueInstName(const char *base_name,
+			    bool underscore);
   bool dontUse(LibertyCell *cell);
   bool overMaxArea();
   bool hasTopLevelOutputPort(Net *net);
@@ -184,12 +212,12 @@ protected:
   Pin *singleOutputPin(const Instance *inst);
   double area(dbMaster *master);
   double area(Cell *cell);
-  double dbuToMeters(uint dist) const;
+  double dbuToMeters(int dist) const;
 
   // RebufferOption factory.
   RebufferOption *makeRebufferOption(RebufferOptionType type,
 				     float cap,
-				     Required required,
+				     Requireds requireds,
 				     Pin *load_pin,
 				     Point location,
 				     RebufferOption *ref,
@@ -219,7 +247,8 @@ protected:
   void bufferLoads(Pin *drvr_pin,
 		   int buffer_count,
 		   int max_fanout,
-		   LibertyCell *buffer_cell);
+		   LibertyCell *buffer_cell,
+		   const char *reason);
   void findLoads(Pin *drvr_pin,
 		 PinSeq &loads);
   void groupLoadsCluster(Pin *drvr_pin,
@@ -239,6 +268,8 @@ protected:
 			 GroupedPins &grouped_loads);
   void reportGroupedLoads(GroupedPins &grouped_loads);
   Point findCenter(PinSeq &pins);
+  bool isFuncOneZero(const Pin *drvr_pin);
+  bool isSpecial(Net *net);
 
   float wire_res_;
   float wire_cap_;
@@ -261,7 +292,7 @@ protected:
   CellTargetLoadMap *target_load_map_;
   VertexSeq level_drvr_verticies_;
   bool level_drvr_verticies_valid_;
-  Slew tgt_slews_[RiseFall::index_count];
+  TgtSlews tgt_slews_;
   int unique_net_index_;
   int unique_inst_index_;
   int resize_count_;

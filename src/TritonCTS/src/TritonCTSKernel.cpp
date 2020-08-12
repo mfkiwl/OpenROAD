@@ -43,6 +43,7 @@
 #include "TritonCTSKernel.h"
 #include "PostCtsOpt.h"
 
+#include <fstream>
 #include <unordered_set>
 #include <chrono>
 #include <ctime>
@@ -51,7 +52,7 @@ namespace TritonCTS {
 
 void TritonCTSKernel::runTritonCts() {
         printHeader();
-        importCharacterization();
+        setupCharacterization();
         findClockRoots();
         populateTritonCts();
         checkCharacterization();
@@ -65,18 +66,34 @@ void TritonCTSKernel::printHeader() const {
         std::cout << " *****************\n";
         std::cout << " * TritonCTS 2.0 *\n";        
         std::cout << " *****************\n";
+}
 
-        auto start = std::chrono::system_clock::now();
-        std::time_t startTime = std::chrono::system_clock::to_time_t(start);
-        std::cout << " Current time: " << std::ctime(&startTime);
+void TritonCTSKernel::setupCharacterization() {
+        std::ifstream lutFile(_options.getLutFile().c_str());
+        std::ifstream solFile(_options.getSolListFile().c_str());
+        if (!lutFile.is_open() || !solFile.is_open()) {
+                //LUT files doesn't exist. So a new characteriztion is created.
+                createCharacterization();
+        } else {
+                //LUT files exists. Import the characterization results.
+                importCharacterization();
+        }
 }
 
 void TritonCTSKernel::importCharacterization() {
         std::cout << " *****************************\n";
         std::cout << " *  Import characterization  *\n";
         std::cout << " *****************************\n";
-       
+        
         _techChar.parse(_options.getLutFile(), _options.getSolListFile()); 
+}
+
+void TritonCTSKernel::createCharacterization() {
+        std::cout << " *****************************\n";
+        std::cout << " *  Create characterization  *\n";
+        std::cout << " *****************************\n";
+
+        _techChar.create();
 }
 
 void TritonCTSKernel::checkCharacterization() {
@@ -104,6 +121,11 @@ void TritonCTSKernel::checkCharacterization() {
 
         std::cout << "    The chacterization used " << visitedMasters.size() << " buffer(s) types."
                   << " All of them are in the loaded DB.\n";
+        
+        
+        if (_options.getOnlyCharacterization() == true){
+                std::exit(1);
+        }
 }
 
 void TritonCTSKernel::findClockRoots() {
@@ -118,9 +140,7 @@ void TritonCTSKernel::findClockRoots() {
         }
 
         std::cout << " User did not specify clock roots.\n";
-        std::cout << " Using OpenSTA to find clock roots.\n";
         _staEngine.init();
-        _staEngine.findClockRoots();
 }
 
 void TritonCTSKernel::populateTritonCts() {
@@ -179,9 +199,6 @@ void TritonCTSKernel::forEachBuilder(const std::function<void(const TreeBuilder*
 }
 
 void TritonCTSKernel::printFooter() const {
-        auto end = std::chrono::system_clock::now();
-        std::time_t endTime = std::chrono::system_clock::to_time_t(end);
-        std::cout << "\n Current time: " << std::ctime(&endTime);
         std::cout << " ... End of TritonCTS execution.\n";
 }
 

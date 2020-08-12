@@ -4,7 +4,7 @@ set -e
 mkdir -p /OpenROAD/build
 cd /OpenROAD
 cmake -B build
-cmake --build build -j 4
+time cmake --build build -j 8
 
 # Capture the commit we are testing for use in flow testing
 commit=`git rev-parse --verify HEAD`
@@ -22,7 +22,7 @@ git submodule update --init --recursive
 
 # Swap to current commit of OpenROAD
 cd tools/OpenROAD
-if ! git ls-remote local > /dev/null; then
+if ! git ls-remote local > /dev/null 2>&1; then
     git remote add local ../../..
 fi
 git fetch

@@ -66,6 +66,18 @@ add_custom_command(OUTPUT ${OPENROAD_TCL_INIT}
 # Do not use REQUIRED because it also requires TK.
 find_package(TCL)
 
+# check for tclReadline
+set(TCL_READLINE_POSSIBLE_NAMES tclreadline-2.1.0
+    tclreadline-2.3.2 tclreadline-2.3.6 tclreadline-2.3.7 tclreadline-2.3.8
+    )
+find_library(TCL_READLINE_LIBRARY
+  NAMES tclreadline ${TCL_READLINE_POSSIBLE_NAMES}
+  PATHS ${TCL_LIB_PATHS}
+  )
+if (TCL_READLINE_LIBRARY)
+  message(STATUS "TCL readline library: ${TCL_READLINE_LIBRARY}")
+endif()
+
 find_package(SWIG REQUIRED 3.0)
 include(UseSWIG)
 set(OPENDB_SWIG_WARNINGS "-w509,503,501,472,467,402,401,317,325,378,383,389,365,362,314,258,240,203,201")
@@ -130,6 +142,7 @@ set_property(SOURCE ${OPENROAD_SWIG_FILE}
   PROPERTY SWIG_FLAGS
   -module openroad
   -namespace -prefix ord
+  -I${OPENSTA_HOME}/include
   -I${DBSTA_HOME}/include
   -I${OPENROAD_HOME}/src
   -I${OPENDB_HOME}/include
@@ -159,15 +172,8 @@ target_include_directories(openroad_swig
   ${OPENROAD_HOME}/include
 
   PRIVATE
-  ${OPENROAD_HOME}/src
-  ${OPENSTA_HOME}/util
-  ${OPENSTA_HOME}/sdc
-  ${OPENSTA_HOME}/network
-  ${OPENSTA_HOME}/parasitics
-  ${OPENSTA_HOME}/liberty
-  ${OPENSTA_HOME}/graph
-  ${OPENSTA_HOME}/search
-
+  ${OPENROAD_HOME}/include
+  ${OPENSTA_HOME}/include
   ${DBSTA_HOME}/include
   ${OPENDB_HOME}/include
 
@@ -200,18 +206,6 @@ set(BUILD_TCL false)
 set(OPENROAD_BUILD ON)
 add_definitions(-DOPENROAD_BUILD)
 
-set(OPENSTA_INCLUDE_DIRS
-  ${OPENSTA_HOME}/util
-  ${OPENSTA_HOME}/liberty
-  ${OPENSTA_HOME}/network
-  ${OPENSTA_HOME}/graph
-  ${OPENSTA_HOME}/sdc
-  ${OPENSTA_HOME}/parasitics
-  ${OPENSTA_HOME}/dcalc
-  ${OPENSTA_HOME}/search
-  ${OPENSTA_HOME}/app
-  )
-
 # Build flow tools
 add_subdirectory(init_fp)
 add_subdirectory(OpenDB)
@@ -227,9 +221,12 @@ add_subdirectory(FastRoute)
 add_subdirectory(tapcell)
 add_subdirectory(TritonMacroPlace)
 add_subdirectory(OpenRCX)
-add_subdirectory(OpenPhySyn)
 add_subdirectory(PDNSim)
 add_subdirectory(tool)
+
+if(BUILD_OPENPHYSYN)
+  add_subdirectory(OpenPhySyn)
+endif()
 
 ################################################################
 
@@ -248,6 +245,7 @@ target_include_directories(openroad
   PUBLIC ${OPENROAD_HOME}/include
   PRIVATE
   ${OPENROAD_HOME}/src
+  ${OPENSTA_HOME}/include
   ${INIT_FP_HOME}/include
   ${OPENDB_HOME}/include
   ${REPLACE_HOME}/include
@@ -284,7 +282,6 @@ target_link_libraries(openroad
   TritonMacroPlace
   ParquetFP
   ABKCommon
-  OpenPhySyn
   pdnsim
   tool
   zlib
@@ -296,6 +293,16 @@ target_link_libraries(openroad
   zutil
   ${TCL_LIBRARY}
 )
+
+if (BUILD_OPENPHYSYN)
+  target_link_libraries(openroad OpenPhySyn)
+endif()
+
+# tclReadline
+if (TCL_READLINE_LIBRARY)
+  add_definitions(-DENABLE_READLINE)
+  target_link_libraries(openroad ${TCL_READLINE_LIBRARY})
+endif()
 
 if (ZLIB_FOUND)
   target_link_libraries(openroad ${ZLIB_LIBRARIES})
