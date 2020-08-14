@@ -30,6 +30,8 @@ set(OPENRCX_HOME ${OPENROAD_HOME}/src/OpenRCX)
 set(MPLACE_HOME ${PROJECT_SOURCE_DIR}/src/TritonMacroPlace)
 set(OPENPHYSYN_HOME ${PROJECT_SOURCE_DIR}/src/OpenPhySyn)
 set(PDNSIM_HOME ${PROJECT_SOURCE_DIR}/src/PDNSim)
+set(ANTENNACHECKER_HOME ${PROJECT_SOURCE_DIR}/src/antennachecker)
+set(GUI_HOME ${PROJECT_SOURCE_DIR}/src/gui)
 set(TOOL_HOME ${OPENROAD_HOME}/src/tool)
 
 set(OPENROAD_WRAP ${CMAKE_CURRENT_BINARY_DIR}/OpenRoad_wrap.cc)
@@ -76,6 +78,11 @@ find_library(TCL_READLINE_LIBRARY
   )
 if (TCL_READLINE_LIBRARY)
   message(STATUS "TCL readline library: ${TCL_READLINE_LIBRARY}")
+endif()
+
+find_path(TCL_READLINE_H tclreadline.h)
+if (TCL_READLINE_H)
+  message(STATUS "TCL readline header: ${TCL_READLINE_H}")
 endif()
 
 find_package(SWIG REQUIRED 3.0)
@@ -222,11 +229,13 @@ add_subdirectory(tapcell)
 add_subdirectory(TritonMacroPlace)
 add_subdirectory(OpenRCX)
 add_subdirectory(PDNSim)
-add_subdirectory(tool)
+add_subdirectory(antennachecker)
 
 if(BUILD_OPENPHYSYN)
   add_subdirectory(OpenPhySyn)
 endif()
+add_subdirectory(gui)
+add_subdirectory(tool)
 
 ################################################################
 
@@ -258,7 +267,11 @@ target_include_directories(openroad
   ${TAPCELL_HOME}/include
   ${OPENRCX_HOME}/include
   ${PDNSIM_HOME}/include
+<<<<<<< HEAD
   ${TOOL_HOME}/include
+=======
+  ${ANTENNACHECKER_HOME}/include
+>>>>>>> origin/openroad
   ${TCL_INCLUDE_PATH}
   ${Boost_INCLUDE_DIRS}
   )
@@ -279,6 +292,7 @@ target_link_libraries(openroad
   TritonCTS
   FastRoute
   tapcell
+  gui
   TritonMacroPlace
   ParquetFP
   ABKCommon
@@ -290,6 +304,7 @@ target_link_libraries(openroad
   defout
   lefin
   lefout
+  antennachecker
   zutil
   ${TCL_LIBRARY}
 )
@@ -299,9 +314,13 @@ if (BUILD_OPENPHYSYN)
 endif()
 
 # tclReadline
-if (TCL_READLINE_LIBRARY)
-  add_definitions(-DENABLE_READLINE)
+if (TCL_READLINE_LIBRARY AND TCL_READLINE_H)
+  target_compile_definitions(openroad PRIVATE ENABLE_READLINE)
   target_link_libraries(openroad ${TCL_READLINE_LIBRARY})
+  target_include_directories(openroad PRIVATE ${TCL_READLINE_H})
+  message(STATUS "TCL readline enabled")
+else()
+  message(STATUS "TCL readline disabled")
 endif()
 
 if (ZLIB_FOUND)

@@ -34,12 +34,23 @@ make_block_sta(odb::dbBlock *block)
 
 // For debugging because I can't get a dbNet vector thru swig.
 void
-report_clk_nets()
+report_all_clk_nets()
 {
   ord::OpenRoad *openroad = ord::getOpenRoad();
   sta::dbSta *sta = openroad->getSta();
   std::set<dbNet*> clk_nets;
   sta->findClkNets(clk_nets);
+  for (dbNet *net : clk_nets)
+    printf("%s\n", net->getConstName());
+}
+
+void
+report_clk_nets(const Clock *clk)
+{
+  ord::OpenRoad *openroad = ord::getOpenRoad();
+  sta::dbSta *sta = openroad->getSta();
+  std::set<dbNet*> clk_nets;
+  sta->findClkNets(clk, clk_nets);
   for (dbNet *net : clk_nets)
     printf("%s\n", net->getConstName());
 }
@@ -50,6 +61,37 @@ sta_to_db_inst(Instance *inst)
   ord::OpenRoad *openroad = ord::getOpenRoad();
   sta::dbNetwork *db_network = openroad->getDbNetwork();
   return db_network->staToDb(inst);
+}
+
+odb::dbBTerm *
+sta_to_db_port(Port *port)
+{
+  ord::OpenRoad *openroad = ord::getOpenRoad();
+  sta::dbNetwork *db_network = openroad->getDbNetwork();
+  Pin *pin = db_network->findPin(db_network->topInstance(), port);
+  dbITerm *iterm;
+  dbBTerm *bterm;
+  db_network->staToDb(pin, iterm, bterm);
+  return bterm;
+}
+
+odb::dbITerm *
+sta_to_db_pin(Pin *pin)
+{
+  ord::OpenRoad *openroad = ord::getOpenRoad();
+  sta::dbNetwork *db_network = openroad->getDbNetwork();
+  dbITerm *iterm;
+  dbBTerm *bterm;
+  db_network->staToDb(pin, iterm, bterm);
+  return iterm;
+}
+
+odb::dbNet *
+sta_to_db_net(Net *net)
+{
+  ord::OpenRoad *openroad = ord::getOpenRoad();
+  sta::dbNetwork *db_network = openroad->getDbNetwork();
+  return db_network->staToDb(net);
 }
 
 odb::dbMaster *

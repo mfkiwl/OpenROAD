@@ -37,6 +37,7 @@
 
 #include <string>
 #include <set>
+#include <vector>
 #include "Version.hh"
 
 extern "C" {
@@ -56,6 +57,7 @@ namespace sta {
 class dbSta;
 class dbNetwork;
 class Resizer;
+class LibertyCell;
 }
 
 namespace ioPlacer {
@@ -98,8 +100,8 @@ namespace pdnsim {
 class PDNSim;
 }
 
-namespace tool {
-class Tool;
+namespace antenna_checker {
+class AntennaChecker;
 }
 
 namespace ord {
@@ -132,7 +134,7 @@ public:
   replace::Replace* getReplace() { return replace_; }
   pdnsim::PDNSim* getPDNSim() { return pdnsim_; }
   FastRoute::FastRouteKernel* getFastRoute() { return fastRoute_; }
-
+  antenna_checker::AntennaChecker *getAntennaChecker(){ return antennaChecker_; }
   tool::Tool *getTool(){ return tool_; }
 
   // Return the bounding box of the db rows.
@@ -154,7 +156,8 @@ public:
   void readVerilog(const char *filename);
   // Write a flat verilog netlist for the database.
   void writeVerilog(const char *filename,
-		    bool sort);
+		    bool sort,
+		    std::vector<sta::LibertyCell*> *remove_cells);
   void linkDesign(const char *top_cell_name);
 
   void readDb(const char *filename);
@@ -192,6 +195,7 @@ private:
   TritonCTS::TritonCTSKernel *tritonCts_;
   tapcell::Tapcell *tapcell_;
   OpenRCX::Ext *extractor_;
+  antenna_checker::AntennaChecker *antennaChecker_;
 #ifdef BUILD_OPENPHYSYN
   psn::Psn *psn_;
 #endif
@@ -213,5 +217,11 @@ getCore(odb::dbBlock *block);
 odb::Point
 closestPtInRect(odb::Rect rect,
 		odb::Point pt);
+odb::Point
+closestPtInRect(odb::Rect rect,
+		int x,
+		int y);
 
-} // namespace
+int
+tclAppInit(Tcl_Interp *interp);
+} // namespace ord

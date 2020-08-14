@@ -65,6 +65,7 @@
 #include "tapcell/MakeTapcell.h"
 #include "OpenRCX/MakeOpenRCX.h"
 #include "pdnsim/MakePDNSim.hh"
+#include "antennachecker/MakeAntennaChecker.hh"
 #ifdef BUILD_OPENPHYSYN
   #include "OpenPhySyn/MakeOpenPhySyn.hpp"
 #endif
@@ -101,8 +102,27 @@ using sta::Resizer;
 OpenRoad *OpenRoad::openroad_ = nullptr;
 
 OpenRoad::OpenRoad()
+  : tcl_interp_(nullptr),
+    db_(nullptr),
+    verilog_network_(nullptr),
+    sta_(nullptr),
+    resizer_(nullptr),
+    ioPlacer_(nullptr),
+    opendp_(nullptr),
+    tritonMp_(nullptr),
+    fastRoute_(nullptr),
+    tritonCts_(nullptr),
+    tapcell_(nullptr),
+    extractor_(nullptr),
+    antennaChecker_(nullptr),
+#ifdef BUILD_OPENPHYSYN
+    psn_(nullptr),
+#endif
+    replace_(nullptr),
+    pdnsim_(nullptr) 
 {
   openroad_ = this;
+  db_ = dbDatabase::create();
 }
 
 OpenRoad::~OpenRoad()
@@ -146,29 +166,23 @@ OpenRoad::init(Tcl_Interp *tcl_interp)
   tcl_interp_ = tcl_interp;
 
   // Make components.
-  db_ = dbDatabase::create();
   sta_ = makeDbSta();
   verilog_network_ = makeDbVerilogNetwork();
   ioPlacer_ = makeIoplacer();
   resizer_ = makeResizer();
   opendp_ = makeOpendp();
-<<<<<<< HEAD
-  // Only idiots need casts here. Don't copy this.
-  fastRoute_ = (FastRoute::FastRouteKernel*) makeFastRoute();
-  tool_ = makeTool();
-
-=======
   fastRoute_ = makeFastRoute();
->>>>>>> master
   tritonCts_ = makeTritonCts();
   tapcell_ = makeTapcell();
   tritonMp_ = makeTritonMp();
   extractor_ = makeOpenRCX();
   replace_ = makeReplace();
   pdnsim_ = makePDNSim();
+  antennaChecker_ = makeAntennaChecker();
 #ifdef BUILD_OPENPHYSYN
   psn_ = makePsn();
 #endif
+  tool_ = makeTool();
 
   // Init components.
   Openroad_Init(tcl_interp);
@@ -191,9 +205,13 @@ OpenRoad::init(Tcl_Interp *tcl_interp)
   initOpenRCX(this);
   initPDNSim(this);
 <<<<<<< HEAD
+<<<<<<< HEAD
   initTool(this);
   
 =======
+=======
+  initAntennaChecker(this);
+>>>>>>> origin/openroad
 #ifdef BUILD_OPENPHYSYN
     initPsn(this);
 #endif
@@ -249,8 +267,10 @@ OpenRoad::readDef(const char *filename,
     dbBlock* block = chip->getBlock();
     if (order_wires) {
       odb::orderWires(block,
-		      nullptr /* net_name_or_id*/,
-		      false /* force */);
+                      nullptr /* net_name_or_id*/,
+                      false /* force */,
+                      false /* verbose */,
+                      true /* quiet */);
     }
 
     for (Observer* observer : observers_) {
@@ -335,9 +355,10 @@ OpenRoad::linkDesign(const char *design_name)
 
 void
 OpenRoad::writeVerilog(const char *filename,
-		       bool sort)
+		       bool sort,
+		       std::vector<sta::LibertyCell*> *remove_cells)
 {
-  sta::writeVerilog(filename, sort, sta_->network());
+  sta::writeVerilog(filename, sort, remove_cells, sta_->network());
 }
 
 bool
@@ -355,6 +376,7 @@ OpenRoad::getCore()
 
 void OpenRoad::addObserver(Observer *observer)
 {
+  assert(observer->owner_ == nullptr);
   observer->owner_ = this;
   observers_.insert(observer);
 }
@@ -393,6 +415,15 @@ closestPtInRect(Rect rect,
 {
   return Point(min(max(pt.getX(), rect.xMin()), rect.xMax()),
                min(max(pt.getY(), rect.yMin()), rect.yMax()));
+}
+
+Point
+closestPtInRect(Rect rect,
+		int x,
+		int y)
+{
+  return Point(min(max(x, rect.xMin()), rect.xMax()),
+               min(max(y, rect.yMin()), rect.yMax()));
 }
 
 } // namespace
