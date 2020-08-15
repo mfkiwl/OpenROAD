@@ -104,6 +104,10 @@ namespace antenna_checker {
 class AntennaChecker;
 }
 
+namespace tool {
+class Tool;
+}
+
 namespace ord {
 
 using std::string;

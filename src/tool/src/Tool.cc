@@ -14,7 +14,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #include "tool/Tool.hh"
-#include "StaMain.hh"
+#include "sta/StaMain.hh"
 
 namespace sta {
 // Tcl files encoded into strings.

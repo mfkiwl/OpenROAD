@@ -41,5 +41,5 @@ target_include_directories(tool
   PRIVATE
   ${OPENROAD_HOME}/include
   ${OPENDB_HOME}/include
-  ${OPENSTA_HOME}/app
+  ${OPENSTA_HOME}/include
   )

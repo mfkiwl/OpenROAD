@@ -204,19 +204,12 @@ OpenRoad::init(Tcl_Interp *tcl_interp)
   initTritonMp(this);
   initOpenRCX(this);
   initPDNSim(this);
-<<<<<<< HEAD
-<<<<<<< HEAD
-  initTool(this);
-  
-=======
-=======
   initAntennaChecker(this);
->>>>>>> origin/openroad
 #ifdef BUILD_OPENPHYSYN
     initPsn(this);
 #endif
+  initTool(this);
 
->>>>>>> master
   // Import exported commands to global namespace.
   Tcl_Eval(tcl_interp, "sta::define_sta_cmds");
   Tcl_Eval(tcl_interp, "namespace import sta::*");
