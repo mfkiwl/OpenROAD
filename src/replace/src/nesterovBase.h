@@ -48,7 +48,11 @@ class dbBTerm;
 class dbNet;
 }
 
-namespace replace {
+namespace utl {
+class Logger;
+}
+
+namespace gpl {
 
 class Instance;
 class Die;
@@ -61,7 +65,6 @@ class Net;
 class GPin;
 class FFT;
 
-class Logger;
 
 class GCell {
 public:
@@ -69,7 +72,7 @@ public:
 
   // instance cells
   GCell(Instance* inst);
-  GCell(std::vector<Instance*>& insts);
+  GCell(const std::vector<Instance*>& insts);
 
   // filler cells
   GCell(int cx, int cy, int dx, int dy);
@@ -81,7 +84,7 @@ public:
 
   void addGPin(GPin* gPin);
 
-  void setClusteredInstance(std::vector<Instance*>& insts);
+  void setClusteredInstance(const std::vector<Instance*>& insts);
   void setInstance(Instance* inst);
   void setFiller();
   void setMacroInstance();
@@ -236,7 +239,7 @@ class GNet {
   public:
     GNet();
     GNet(Net* net);
-    GNet(std::vector<Net*>& nets);
+    GNet(const std::vector<Net*>& nets);
     ~GNet();
 
     Net* net() const;
@@ -248,16 +251,19 @@ class GNet {
     int ux() const;
     int uy() const;
 
+    void setTimingWeight( float timingWeight );
     void setCustomWeight( float customWeight );
+
+    float totalWeight() const { return timingWeight_ * customWeight_; }
+    float timingWeight() const { return timingWeight_; }
     float customWeight() const { return customWeight_; }
-    float netWeight() const { return weight_; }
 
     void addGPin(GPin* gPin);
     void updateBox();
-    int64_t hpwl();
+    int64_t hpwl() const;
 
     void setDontCare();
-    bool isDontCare();
+    bool isDontCare() const;
 
     // clear WA(Weighted Average) variables.
     void clearWaVars();
@@ -295,8 +301,8 @@ class GNet {
     int ux_;
     int uy_;
 
+    float timingWeight_;
     float customWeight_;
-    float weight_;
 
     //
     // weighted average WL model stor for better indexing
@@ -444,7 +450,7 @@ class GPin {
   public:
     GPin();
     GPin(Pin* pin);
-    GPin(std::vector<Pin*>& pins);
+    GPin(const std::vector<Pin*>& pins);
     ~GPin();
 
     Pin* pin() const;
@@ -671,15 +677,14 @@ public:
   BinGrid(Die* die);
   ~BinGrid();
 
-  void setPlacerBase(std::shared_ptr<PlacerBase> pb);
-  void setLogger(std::shared_ptr<Logger> log);
-  void setCorePoints(Die* die);
+  void setPlacerBase(const std::shared_ptr<PlacerBase> pb);
+  void setLogger(utl::Logger* log);
+  void setCorePoints(const Die* die);
   void setBinCnt(int binCntX, int binCntY);
   void setBinCntX(int binCntX);
   void setBinCntY(int binCntY);
   void setTargetDensity(float density);
-  void updateBinsGCellDensityArea(std::vector<GCell*>& cells);
-
+  void updateBinsGCellDensityArea(const std::vector<GCell*>& cells);
 
   void initBins();
 
@@ -701,11 +706,11 @@ public:
   int64_t overflowArea() const;
 
   // return bins_ index with given gcell
-  std::pair<int, int> getDensityMinMaxIdxX(GCell* gcell);
-  std::pair<int, int> getDensityMinMaxIdxY(GCell* gcell);
+  std::pair<int, int> getDensityMinMaxIdxX(const GCell* gcell) const;
+  std::pair<int, int> getDensityMinMaxIdxY(const GCell* gcell) const ;
 
-  std::pair<int, int> getMinMaxIdxX(Instance* inst);
-  std::pair<int, int> getMinMaxIdxY(Instance* inst);
+  std::pair<int, int> getMinMaxIdxX(const Instance* inst) const;
+  std::pair<int, int> getMinMaxIdxY(const Instance* inst) const;
 
   const std::vector<Bin*> & bins() const;
   
@@ -715,7 +720,7 @@ private:
   std::vector<Bin> binStor_;
   std::vector<Bin*> bins_;
   std::shared_ptr<PlacerBase> pb_;
-  std::shared_ptr<Logger> log_;
+  utl::Logger* log_;
   int lx_;
   int ly_;
   int ux_;
@@ -738,14 +743,13 @@ BinGrid::bins() const {
 class NesterovBaseVars {
 public:
   float targetDensity;
-  float minAvgCut;
-  float maxAvgCut;
   int binCntX;
   int binCntY;
   float minWireLengthForceBar;
   // temp variables
   unsigned char isSetBinCntX:1;
   unsigned char isSetBinCntY:1;
+  unsigned char useUniformTargetDensity:1;
 
   NesterovBaseVars();
   void reset();
@@ -756,7 +760,7 @@ public:
   NesterovBase();
   NesterovBase(NesterovBaseVars nbVars,
       std::shared_ptr<PlacerBase> pb,
-      std::shared_ptr<Logger> log);
+      utl::Logger* log);
   ~NesterovBase();
 
   const std::vector<GCell*> & gCells() const { return gCells_; }
@@ -783,14 +787,14 @@ public:
 
   // update gCells with lx, ly
   void updateGCellLocation(
-      std::vector<FloatPoint>& points);
+      const std::vector<FloatPoint>& points);
 
   // update gCells with cx, cy
   void updateGCellCenterLocation(
-      std::vector<FloatPoint>& points);
+      const std::vector<FloatPoint>& points);
 
   void updateGCellDensityCenterLocation(
-      std::vector<FloatPoint>& points);
+      const std::vector<FloatPoint>& points);
 
 
   int binCntX() const;
@@ -820,13 +824,8 @@ public:
   // and totalFillerArea after changing gCell's size
   void updateAreas();
 
-  // change fillerCell's size
-  void updateFillerCellSize(int dx, int dy);
-
   // update density sizes with changed dx and dy
   void updateDensitySize();
-  
-
 
   // should be separately defined.
   // This is mainly used for NesterovLoop
@@ -850,8 +849,8 @@ public:
 
   void updateDensityCoordiLayoutInside(GCell* gcell);
 
-  float getDensityCoordiLayoutInsideX(GCell* gCell, float cx);
-  float getDensityCoordiLayoutInsideY(GCell* gCell, float cy);
+  float getDensityCoordiLayoutInsideX(const GCell* gCell, float cx) const;
+  float getDensityCoordiLayoutInsideY(const GCell* gCell, float cy) const;
 
   // WL force update based on WeightedAverage model
   // wlCoeffX : WireLengthCoefficient for X.
@@ -866,22 +865,22 @@ public:
       float wlCoeffY);
 
   FloatPoint
-    getWireLengthGradientPinWA(GPin* gPin,
-        float wlCoeffX, float wlCoeffY);
+    getWireLengthGradientPinWA(const GPin* gPin,
+        float wlCoeffX, float wlCoeffY) const;
 
   FloatPoint
-    getWireLengthGradientWA(GCell* gCell,
-        float wlCoeffX, float wlCoeffY);
+    getWireLengthGradientWA(const GCell* gCell,
+        float wlCoeffX, float wlCoeffY) const;
 
   // for preconditioner
   FloatPoint
-    getWireLengthPreconditioner(GCell* gCell);
+    getWireLengthPreconditioner(const GCell* gCell) const;
 
   FloatPoint
-    getDensityPreconditioner(GCell* gCell);
+    getDensityPreconditioner(const GCell* gCell) const;
 
   FloatPoint
-    getDensityGradient(GCell* gCell);
+    getDensityGradient(const GCell* gCell) const;
 
   int64_t getHpwl();
 
@@ -893,7 +892,7 @@ public:
 private:
   NesterovBaseVars nbVars_;
   std::shared_ptr<PlacerBase> pb_;
-  std::shared_ptr<Logger> log_;
+  utl::Logger* log_;
 
   BinGrid bg_;
   std::unique_ptr<FFT> fft_;

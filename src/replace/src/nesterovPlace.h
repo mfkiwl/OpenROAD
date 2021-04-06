@@ -38,14 +38,19 @@
 #include <memory>
 #include <vector>
 
-namespace replace
+namespace utl {
+class Logger;
+}
+
+namespace gpl 
 {
 
 class PlacerBase;
 class Instance;
 class NesterovBase;
-class Logger;
 class RouteBase;
+class TimingBase;
+class Graphics;
 
 class NesterovPlaceVars {
   public:
@@ -66,6 +71,10 @@ class NesterovPlaceVars {
 
   bool timingDrivenMode;
   bool routabilityDrivenMode;
+  bool debug;
+  int debug_pause_iterations;
+  int debug_update_iterations;
+  bool debug_draw_bins;
 
   NesterovPlaceVars();
   void reset();
@@ -78,15 +87,11 @@ public:
       std::shared_ptr<PlacerBase> pb,
       std::shared_ptr<NesterovBase> nb,
       std::shared_ptr<RouteBase> rb,
-      std::shared_ptr<Logger> log);
+      std::shared_ptr<TimingBase> tb,
+      utl::Logger* log);
   ~NesterovPlace();
 
   void doNesterovPlace();
-
-  void updateCoordi(
-      std::vector<FloatPoint>& coordi);
-  void updateBins();
-  void updateWireLength();
 
   void updateGradients(
       std::vector<FloatPoint>& sumGrads,
@@ -98,23 +103,29 @@ public:
   void updateInitialPrevSLPCoordi();
 
   float getStepLength(
-      std::vector<FloatPoint>& prevCoordi_,
-      std::vector<FloatPoint>& prevSumGrads_,
-      std::vector<FloatPoint>& curCoordi_,
-      std::vector<FloatPoint>& curSumGrads_ );
+      const std::vector<FloatPoint>& prevCoordi_,
+      const std::vector<FloatPoint>& prevSumGrads_,
+      const std::vector<FloatPoint>& curCoordi_,
+      const std::vector<FloatPoint>& curSumGrads_ );
 
   void updateNextIter();
-  float getPhiCoef(float scaledDiffHpwl);
+  float getPhiCoef(float scaledDiffHpwl) const;
 
   void updateDb();
+
+  float getWireLengthCoefX() const { return wireLengthCoefX_; }
+  float getWireLengthCoefY() const { return wireLengthCoefY_; }
+  float getDensityPenalty() const { return densityPenalty_; }
 
 private:
   std::shared_ptr<PlacerBase> pb_;
   std::shared_ptr<NesterovBase> nb_;
-  std::shared_ptr<Logger> log_;
+  utl::Logger* log_;
   std::shared_ptr<RouteBase> rb_;
+  std::shared_ptr<TimingBase> tb_;
   NesterovPlaceVars npVars_;
-
+  std::unique_ptr<Graphics> graphics_;
+  
   // SLP is Step Length Prediction.
   //
   // y_st, y_dst, y_wdst, w_pdst

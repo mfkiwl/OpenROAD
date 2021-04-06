@@ -1,9 +1,10 @@
 source "helpers.tcl"
+source ../src/ICeWall.tcl
 
-read_lef nangate45/NangateOpenCellLibrary.mod.lef
-read_lef soc_bsg_black_parrot_nangate45/dummy_pads.lef
+read_lef NangateOpenCellLibrary.mod.lef
+read_lef dummy_pads.lef
 
-read_liberty soc_bsg_black_parrot_nangate45/dummy_pads.lib
+read_liberty dummy_pads.lib
 
 read_verilog soc_bsg_black_parrot_nangate45/soc_bsg_black_parrot.v
 
@@ -16,8 +17,8 @@ if {[catch {ICeWall load_footprint soc_bsg_black_parrot_nangate45/bsg_black_parr
 }
 
 initialize_floorplan \
-  -die_area  [ICeWall get_die_area] \
-  -core_area [ICeWall get_core_area] \
+  -die_area  {0 0 3000.000 3000.000} \
+  -core_area {180.012 180.096 2819.964 2819.712} \
   -tracks    [ICeWall get_tracks] \
   -site      FreePDK45_38x28_10R_NP_162NW_34O
 

@@ -1,9 +1,9 @@
 /////////////////////////////////////////////////////////////////////////////
 //
-// BSD 3-Clause License
-//
-// Copyright (c) 2019, James Cherry, Parallax Software, Inc.
+// Copyright (c) 2019, OpenROAD
 // All rights reserved.
+//
+// BSD 3-Clause License
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
@@ -38,7 +38,6 @@
 #include <string>
 #include <set>
 #include <vector>
-#include "Version.hh"
 
 extern "C" {
 struct Tcl_Interp;
@@ -60,50 +59,66 @@ class Resizer;
 class LibertyCell;
 }
 
-namespace ioPlacer {
-class IOPlacementKernel;
+namespace rsz {
+class Resizer;
 }
 
-namespace TritonCTS {
-class TritonCTSKernel;
+namespace ppl {
+class IOPlacer;
 }
 
-namespace FastRoute {
-class FastRouteKernel;
+namespace cts {
+class TritonCTS;
 }
 
-namespace tapcell {
-    class Tapcell;
+namespace grt {
+class GlobalRouter;
 }
 
-namespace opendp {
+namespace tap {
+class Tapcell;
+}
+
+namespace dpl {
 class Opendp;
 }
 
-namespace MacroPlace {
-class TritonMacroPlace;
+namespace fin {
+class Finale;
 }
 
-namespace replace {
+namespace mpl {
+class MacroPlacer;
+}
+
+namespace gpl {
 class Replace;
 }
 
-namespace OpenRCX {
+namespace rcx {
 class Ext;
 }
 
-namespace psn {
-class Psn;
+namespace triton_route {
+class TritonRoute;
 }
 
-namespace pdnsim {
+namespace psm {
 class PDNSim;
 }
 
-namespace antenna_checker {
+namespace ant {
 class AntennaChecker;
 }
 
+
+namespace par {
+class PartitionMgr;
+}
+
+namespace utl {
+class Logger;
+}
 
 namespace ord {
 
@@ -114,28 +129,34 @@ class dbVerilogNetwork;
 // Only pointers to components so the header has no dependents.
 class OpenRoad
 {
-  OpenRoad();
-  ~OpenRoad();
 public:
-  // Singleton accessor used by tcl command interpreter.
+  // Singleton accessor.
+  // This accessor should ONLY be used for tcl commands.
+  // Tools should use their initialization functions to get the
+  // OpenRoad object and/or any other tools they need to reference.
   static OpenRoad *openRoad();
   void init(Tcl_Interp *tcl_interp);
 
   Tcl_Interp *tclInterp() { return tcl_interp_; }
+  utl::Logger *getLogger() { return logger_; }
   odb::dbDatabase *getDb() { return db_; }
   sta::dbSta *getSta() { return sta_; }
   sta::dbNetwork *getDbNetwork();
-  sta::Resizer *getResizer() { return resizer_; }
-  TritonCTS::TritonCTSKernel *getTritonCts() { return tritonCts_; } 
+  rsz::Resizer *getResizer() { return resizer_; }
+  cts::TritonCTS *getTritonCts() { return tritonCts_; } 
   dbVerilogNetwork *getVerilogNetwork() { return verilog_network_; }
-  opendp::Opendp *getOpendp() { return opendp_; }
-  tapcell::Tapcell *getTapcell() { return tapcell_; }
-  MacroPlace::TritonMacroPlace *getTritonMp() { return tritonMp_; }
-  OpenRCX::Ext *getOpenRCX() { return extractor_; }
-  replace::Replace* getReplace() { return replace_; }
-  pdnsim::PDNSim* getPDNSim() { return pdnsim_; }
-  FastRoute::FastRouteKernel* getFastRoute() { return fastRoute_; }
-  antenna_checker::AntennaChecker *getAntennaChecker(){ return antennaChecker_; }
+  dpl::Opendp *getOpendp() { return opendp_; }
+  fin::Finale *getFinale() { return finale_; }
+  tap::Tapcell *getTapcell() { return tapcell_; }
+  mpl::MacroPlacer *getMacroPlacer() { return macro_placer_; }
+  rcx::Ext *getOpenRCX() { return extractor_; }
+  triton_route::TritonRoute *getTritonRoute() { return detailed_router_; }
+  gpl::Replace* getReplace() { return replace_; }
+  psm::PDNSim* getPDNSim() { return pdnsim_; }
+  grt::GlobalRouter* getFastRoute() { return fastRoute_; }
+  par::PartitionMgr *getPartitionMgr() { return partitionMgr_; }
+  ant::AntennaChecker *getAntennaChecker() { return antenna_checker_; }
+  ppl::IOPlacer *getIOPlacer() { return ioPlacer_; }
   // Return the bounding box of the db rows.
   odb::Rect getCore();
   // Return true if the command units have been initialized.
@@ -148,20 +169,30 @@ public:
 
   void readDef(const char *filename,
                bool order_wires,
-               bool continue_on_errors);
+               bool continue_on_errors,
+               bool floorplan_init,
+               bool incremental);
+  
   void writeDef(const char *filename,
 		// major.minor (avoid including defout.h)
 		string version);
+  
+  void writeCdl(const char *filename, bool includeFillers);
 
   void readVerilog(const char *filename);
   // Write a flat verilog netlist for the database.
   void writeVerilog(const char *filename,
 		    bool sort,
+		    bool include_pwr_gnd,
 		    std::vector<sta::LibertyCell*> *remove_cells);
   void linkDesign(const char *top_cell_name);
 
   void readDb(const char *filename);
   void writeDb(const char *filename);
+
+#ifdef ENABLE_PYTHON3
+  void pythonCommand(const char* py_command);
+#endif
 
   // Observer interface
   class Observer
@@ -182,30 +213,34 @@ public:
   void addObserver(Observer *observer);
   void removeObserver(Observer *observer);
 
+protected:
+  ~OpenRoad();
+  friend void deleteAllMemory();
+
 private:
+  OpenRoad();
+
   Tcl_Interp *tcl_interp_;
+  utl::Logger *logger_;
   odb::dbDatabase *db_;
   dbVerilogNetwork *verilog_network_;
   sta::dbSta *sta_;
-  sta::Resizer *resizer_;
-  ioPlacer::IOPlacementKernel *ioPlacer_;
-  opendp::Opendp *opendp_;
-  MacroPlace::TritonMacroPlace *tritonMp_;
-  FastRoute::FastRouteKernel *fastRoute_;
-  TritonCTS::TritonCTSKernel *tritonCts_;
-  tapcell::Tapcell *tapcell_;
-  OpenRCX::Ext *extractor_;
-  antenna_checker::AntennaChecker *antennaChecker_;
-#ifdef BUILD_OPENPHYSYN
-  psn::Psn *psn_;
-#endif
-  replace::Replace *replace_;
-  pdnsim::PDNSim *pdnsim_; 
+  rsz::Resizer *resizer_;
+  ppl::IOPlacer *ioPlacer_;
+  dpl::Opendp *opendp_;
+  fin::Finale *finale_;
+  mpl::MacroPlacer *macro_placer_;
+  grt::GlobalRouter *fastRoute_;
+  cts::TritonCTS *tritonCts_;
+  tap::Tapcell *tapcell_;
+  rcx::Ext *extractor_;
+  triton_route::TritonRoute *detailed_router_;
+  ant::AntennaChecker *antenna_checker_;
+  gpl::Replace *replace_;
+  psm::PDNSim *pdnsim_; 
+  par::PartitionMgr *partitionMgr_;
 
   std::set<Observer *> observers_;
-
-  // Singleton used by tcl command interpreter.
-  static OpenRoad *openroad_;
 };
 
 // Return the bounding box of the db rows.
@@ -223,4 +258,8 @@ closestPtInRect(odb::Rect rect,
 
 int
 tclAppInit(Tcl_Interp *interp);
+
+void
+deleteAllMemory();
+
 } // namespace ord

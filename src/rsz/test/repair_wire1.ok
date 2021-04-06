@@ -1,0 +1,75 @@
+[INFO ODB-0222] Reading LEF file: Nangate45/Nangate45.lef
+[INFO ODB-0223]     Created 22 technology layers
+[INFO ODB-0224]     Created 27 technology vias
+[INFO ODB-0225]     Created 134 library cells
+[INFO ODB-0226] Finished LEF file:  Nangate45/Nangate45.lef
+[INFO ODB-0127] Reading DEF file: repair_wire1.def
+[INFO ODB-0128] Design: long_wire
+[INFO ODB-0130]     Created 2 pins.
+[INFO ODB-0131]     Created 3 components and 12 component-terminals.
+[INFO ODB-0132]     Created 2 special nets and 6 connections.
+[INFO ODB-0133]     Created 4 nets and 6 connections.
+[INFO ODB-0134] Finished DEF file: repair_wire1.def
+Max slew 0.199ns
+Max wire length 1249u
+Startpoint: in1 (input port)
+Endpoint: out1 (output port)
+Path Group: (none)
+Path Type: max
+
+     Cap     Slew    Delay     Time   Description
+---------------------------------------------------------------------------
+                     0.000    0.000 ^ input external delay
+   1.009    0.000    0.000    0.000 ^ in1 (in)
+            0.000    0.000    0.000 ^ u1/A (BUF_X1)
+   0.998    0.006    0.016    0.016 ^ u1/Z (BUF_X1)
+            0.006    0.000    0.016 ^ u2/A (BUF_X1)
+ 105.475    0.164    0.178    0.194 ^ u2/Z (BUF_X1)
+            0.420    0.317    0.511 ^ u3/A (BUF_X1)
+   0.000    0.016    0.020    0.532 ^ u3/Z (BUF_X1)
+            0.016    0.000    0.532 ^ out1 (out)
+                              0.532   data arrival time
+---------------------------------------------------------------------------
+(Path is unconstrained)
+
+
+Driver    length delay
+u2/Z manhtn 1999.8 steiner 1999.8 0.37
+u3/Z manhtn 1.1 steiner 1.1 0.00
+u1/Z manhtn 0.4 steiner 0.4 0.00
+[WARNING RSZ-0017] max wire length less than 853u increases wire delays.
+[INFO RSZ-0036] Found 1 capacitance violations.
+[INFO RSZ-0037] Found 1 long wires.
+[INFO RSZ-0038] Inserted 2 buffers in 1 nets.
+[INFO RSZ-0039] Resized 1 instances.
+Driver    length delay
+repeater1/Z manhtn 759.8 steiner 759.8 0.05
+repeater2/Z manhtn 759.3 steiner 759.3 0.05
+u2/Z manhtn 480.1 steiner 480.1 0.02
+u3/Z manhtn 1.1 steiner 1.1 0.00
+u1/Z manhtn 0.5 steiner 0.5 0.00
+Startpoint: in1 (input port)
+Endpoint: out1 (output port)
+Path Group: (none)
+Path Type: max
+
+     Cap     Slew    Delay     Time   Description
+---------------------------------------------------------------------------
+                     0.000    0.000 ^ input external delay
+   1.009    0.000    0.000    0.000 ^ in1 (in)
+            0.000    0.000    0.000 ^ u1/A (BUF_X1)
+   3.426    0.011    0.023    0.023 ^ u1/Z (BUF_X1)
+            0.011    0.000    0.023 ^ u2/A (BUF_X4)
+  28.490    0.014    0.028    0.051 ^ u2/Z (BUF_X4)
+            0.030    0.023    0.074 ^ repeater2/A (BUF_X4)
+  43.082    0.018    0.037    0.111 ^ repeater2/Z (BUF_X4)
+            0.063    0.050    0.161 ^ repeater1/A (BUF_X4)
+  40.681    0.018    0.041    0.201 ^ repeater1/Z (BUF_X4)
+            0.057    0.045    0.246 ^ u3/A (BUF_X1)
+   0.000    0.006    0.026    0.272 ^ u3/Z (BUF_X1)
+            0.006    0.000    0.272 ^ out1 (out)
+                              0.272   data arrival time
+---------------------------------------------------------------------------
+(Path is unconstrained)
+
+

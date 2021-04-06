@@ -9,6 +9,7 @@
 *.gcno
 *.rej
 *.orig
+*.vscode
 TAGS
 *~
 \#*#
@@ -21,3 +22,5 @@ include/openroad/Version.hh
 build
 test/results
 flow
+
+coverage-output

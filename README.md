@@ -1,16 +1,38 @@
 # OpenROAD
 
-OpenROAD is a chip physical design tool. It uses the OpenDB database
-as a design database and representation. OpenSTA is used for static
-timing analysis.
+[![Build Status](https://jenkins.openroad.tools/buildStatus/icon?job=OpenROAD-Public%2Fmaster)](https://jenkins.openroad.tools/job/OpenROAD-Public/job/master/) [![Coverity Scan Status](https://scan.coverity.com/projects/the-openroad-project-openroad/badge.svg)](https://scan.coverity.com/projects/the-openroad-project-openroad) [![Documentation Status](https://readthedocs.org/projects/openroad/badge/?version=latest)](https://openroad.readthedocs.io/en/latest/?badge=latest)
 
-#### Build
+OpenROAD is an integrated chip physical design tool that takes a
+design from synthesized Verilog to routed layout.  
+
+An outline of steps used to build a chip using OpenROAD are shown below.
+
+* Initialize floorplan - define the chip size and cell rows
+* Place pins (for designs without pads )
+* Place macro cells (RAMs, embedded macros)
+* Insert substrate tap cells
+* Insert power distribution network
+* Macro Placement of macro cells
+* Global placement of standard cells
+* Repair max slew, max capacitance, and max fanout violations and long wires
+* Clock tree synthesis
+* Optimize setup/hold timing
+* Insert fill cells
+* Global routing (route guides for detailed routing)
+* Detailed routing
+
+OpenROAD uses the OpenDB database and OpenSTA for static timing analysis.
+
+## Install dependencies
+
+The `etc/DependencyInstaller.sh`  script supports Centos7 and Ubuntu 20.04.
+You need root access to correctly install the dependencies with the script.
 
 The OpenROAD build requires the following packages:
 
 Tools
   * cmake 3.14
-  * gcc 8.3.0 or clang
+  * gcc 8.3.0 or clang7
   * bison 3.0.5
   * flex 2.6.4
   * swig 4.0
@@ -18,22 +40,36 @@ Tools
 Libraries
   * boost 1.68
   * tcl 8.6
-  * zlib
-  * eigen
-  * lemon
+  * zlibc
+  * eigen3
+  * spdlog
+  * [lemon](http://lemon.cs.elte.hu/pub/sources/lemon-1.3.1.tar.gz)(graph library, not the parser)
   * qt5
-  * CImg (optional for replace)
+  * cimg (optional for replace)
 
+```
+./etc/DependencyInstaller.sh -dev
+```
 
-See `Dockerfile` for an example of how to install these packages. 
+## Build
 
 ```
 git clone --recursive https://github.com/The-OpenROAD-Project/OpenROAD.git
 cd OpenROAD
-mkdir build
-cd build
-cmake ..
-make
+```
+
+
+### Build by hand
+```
+$ mkdir build
+$ cd build
+$ cmake ..
+$ make
+```
+
+### Build using support script
+```
+$ ./etc/Build.sh
 ```
 
 OpenROAD git submodules (cloned by the --recursive flag) are located in `/src`.
@@ -52,6 +88,11 @@ ZLIB_ROOT - path to zlib
 CMAKE_INSTALL_PREFIX
 ```
 
+### Example with support script
+```
+$ ./etc/Build.sh --cmake="-DCMAKE_BUILD_TYPE=DEBUG -DTCL_LIB=/path/to/tcl/lib"
+```
+
 The default install directory is `/usr/local`.
 To install in a different directory with CMake use:
 
@@ -68,8 +109,14 @@ make DESTDIR=<prefix_path> install
 There are a set of regression tests in `/test`.
 
 ```
+# run all tool unit tests
 test/regression
-src/resizer/test/regression
+# run all flow tests
+test/regression flow
+# run <tool> tests
+test/regression <tool>
+# run <tool> tool tests
+src/<tool>/test/regression
 
 ```
 
@@ -175,7 +222,6 @@ Each of these designs use the common script `flow.tcl`.
 ```
 initialize_floorplan
   [-site site_name]               LEF site name for ROWS
-  [-tracks tracks_file]           routing track specification
   -die_area "lx ly ux uy"         die area in microns
   [-core_area "lx ly ux uy"]      core area in microns
 or
@@ -192,8 +238,6 @@ explicitly with the -die_area and -core_area arguments. Alternatively,
 the die and core area can be computed from the design size and
 utilization as show below:
 
-If no -tracks file is used the routing layers from the LEF are used.
-
 ```
  core_area = design_area / (utilization / 100)
  core_width = sqrt(core_area / aspect_ratio)
@@ -205,51 +249,237 @@ If no -tracks file is used the routing layers from the LEF are used.
           core_height + core_space_bottom + core_space_top )
 ```
 
+The `initialize_floorplan` command removes existing tracks.
+Use the `make_tracks` command to add routing tracks to a floorplan.
+
+```
+make_tracks [layer]
+            [-x_pitch x_pitch]
+            [-y_pitch y_pitch]
+            [-x_offset x_offset]
+            [-y_offset y_offset]
+```
+
+With no arguments `make_tracks` adds X and Y tracks for each routing layer.
+With a `-layer` argument `make_tracks` adds X and Y tracks for layer with
+options to override the LEF technology X and Y pitch and offset.
+
 Place pins around core boundary.
 
 ```
 auto_place_pins pin_layer
 ```
 
-#### I/O pin assignment
+#### Pin placement
 
-Assign I/O pins to on-track locations at the boundaries of the 
-core while optimizing I/O nets wirelength. I/O pin assignment also 
-creates a metal shape for each I/O pin using min-area rules.
+Place pins on the boundary of the die on the track grid to
+minimize net wire lengths. Pin placement also 
+creates a metal shape for each pin using min-area rules.
 
-Use the following command to perform I/O pin assignment:
+For designs with unplaced cells, the net wire length is
+computed considering the center of the die area as the
+unplaced cells' position.
+
+Use the following command to perform pin placement:
 ```
-place_ios [-hor_layer h_layer]  
-          [-ver_layer v_layer] 
-	  [-random_seed seed] 
-          [-random] 
+place_pins [-hor_layers h_layers]  
+           [-ver_layers v_layers] 
+           [-random_seed seed]
+           [-exclude interval]
+           [-random]
+           [-group_pins pins]
+           [-corner_avoidance length]
+           [-min_distance distance]
 ```
-- ``-hor_layer`` (mandatory). Set the layer to create the metal shapes 
-of I/O pins assigned to horizontal tracks. 
-- ``-ver_layer`` (mandatory). Set the layer to create the metal shapes
-of I/O pins assigned to vertical tracks. 
-- ``-random_seed``. Set the seed for random operations.
-- ``-random``. When this flag is enabled, the I/O pin assignment is 
+- ``-hor_layers`` (mandatory). Specify the layers to create the metal shapes 
+of pins placed in horizontal tracks. Can be a single layer or a list of layer indices.
+- ``-ver_layers`` (mandatory). Specify the layers to create the metal shapes
+of pins placed in vertical tracks. Can be a single layer or a list of layer indices.
+- ``-random_seed``. Specify the seed for random operations.
+- ``-exclude``. Specify an interval in one of the four edges of the die boundary
+where pins cannot be placed. Can be used multiple times.
+- ``-random``. When this flag is enabled, the pin placement is 
 random.
+- ``-group_pins``. Specify a list of pins to be placed together on the die boundary.
+- ``-corner_avoidance distance``. Specify the distance (in micron) from each corner to avoid placing pins.
+- ``-min_distance distance``. Specify the minimum distance (in micron) between pins in the die boundary.
+
+The `exclude` option syntax is `-exclude edge:interval`. The `edge` values are
+(top|bottom|left|right). The `interval` can be the whole edge, with the `*` value,
+or a range of values. Example: `place_pins -hor_layers 2 -ver_layers 3 -exclude top:* -exclude right:15-60.5 -exclude left:*-50`.
+In the example, three intervals were excluded: the whole top edge, the right edge from 15 microns to 60.5 microns, and the
+left edge from the beginning to the 50 microns.
+
+```
+set_io_pin_constraint -direction direction -pin_names names -region edge:interval
+```
+
+The `set_io_pin_constraint` command sets region constraints for pins according the direction or the pin name.
+This command can be called multiple times with different constraints. Only one condition should be used for each
+command call. The `-direction` argument is the pin direction defined in DEF file (input, output, inout, and feedthru).
+The `-pin_names` argument is a list of names. The `-region` syntax is the same as the `-exclude` syntax.
+
+#### Tapcell
+
+Tapcell and endcap insertion.
+
+```
+tapcell [-tapcell_master tapcell_master]
+        [-endcap_master endcap_master]
+        [-distance dist]
+        [-halo_width_x halo_x]
+        [-halo_width_y halo_y]
+        [-tap_nwin2_master tap_nwin2_master]
+        [-tap_nwin3_master tap_nwin3_master]
+        [-tap_nwout2_master tap_nwout2_master]
+        [-tap_nwout3_master tap_nwout3_master]
+        [-tap_nwintie_master tap_nwintie_master]
+        [-tap_nwouttie_master tap_nwouttie_master]
+        [-cnrcap_nwin_master cnrcap_nwin_master]
+        [-cnrcap_nwout_master cnrcap_nwout_master]
+        [-incnrcap_nwin_master incnrcap_nwin_master]
+        [-incnrcap_nwout_master incnrcap_nwout_master]
+        [-tap_prefix tap_prefix]
+        [-endcap_prefix endcap_prefix]
+```
+You can find script examples for both 45nm/65nm and 14nm in ```tapcell/etc/scripts```
+
+#### Global Placement
+
+RePlAce global placement.
+
+```
+global_placement
+    [-timing_driven]
+    [-routability_driven]
+    [-skip_initial_place]
+    [-disable_timing_driven]
+    [-disable_routability_driven]
+    [-incremental]
+    [-bin_grid_count grid_count]
+    [-density target_density]
+    [-init_density_penalty init_density_penalty]
+    [-init_wirelength_coef init_wirelength_coef]
+    [-min_phi_coef min_phi_conef]
+    [-max_phi_coef max_phi_coef]
+    [-overflow overflow]
+    [-initial_place_max_iter initial_place_max_iter]
+    [-initial_place_max_fanout initial_place_max_fanout]
+    [-routability_check_overflow routability_check_overflow]
+    [-routability_max_density routability_max_density]
+    [-routability_max_bloat_iter routability_max_bloat_iter]
+    [-routability_max_inflation_iter routability_max_inflation_iter]
+    [-routability_target_rc_metric routability_target_rc_metric]
+    [-routability_inflation_ratio_coef routability_inflation_ratio_coef]
+    [-routability_pitch_scale routability_pitch_scale]
+    [-routability_max_inflation_ratio routability_max_inflation_ratio]
+    [-routability_rc_coefficients routability_rc_coefficients]
+    [-pad_left pad_left]
+    [-pad_right pad_right]
+    [-verbose_level level]
+```
+
+- **timing_driven**: Enable timing-driven mode
+* __skip_initial_place__ : Skip the initial placement (BiCGSTAB solving) before Nesterov placement. IP improves HPWL by ~5% on large designs. Equal to '-initial_place_max_iter 0'
+* __incremental__ : Enable the incremental global placement. Users would need to tune other parameters (e.g. init_density_penalty) with pre-placed solutions. 
+- **grid_count**: [64,128,256,512,..., int]. Default: Defined by internal algorithm.
+
+### Tuning Parameters
+* __bin_grid_count__ : Set bin grid's counts. Default: Defined by internal algorithm. [64,128,256,512,..., int]
+* __density__ : Set target density. Default: 0.70 [0-1, float]
+* __init_density_penalty__ : Set initial density penalty. Default: 8e-5 [1e-6 - 1e6, float]
+* __init_wire_length__coef__ : Set initial wirelength coefficient. Default: 0.25 [unlimited, float] 
+* __min_phi_coef__ : Set pcof_min(µ_k Lower Bound). Default: 0.95 [0.95-1.05, float]
+* __max_phi_coef__ : Set pcof_max(µ_k Upper Bound). Default: 1.05 [1.00-1.20, float]
+* __overflow__ : Set target overflow for termination condition. Default: 0.1 [0-1, float]
+* __initial_place_max_iter__ : Set maximum iterations in initial place. Default: 20 [0-, int]
+* __initial_place_max_fanout__ : Set net escape condition in initial place when 'fanout >= initial_place_max_fanout'. Default: 200 [1-, int]
+* __verbose_level__ : Set verbose level for RePlAce. Default: 1 [0-10, int]
+
+`-timing_driven` does a virtual 'repair_design' to find slacks and
+weight nets with low slack.  Use the `set_wire_rc` command to set
+resistance and capacitance of estimated wires used for timing.
+
+#### Macro Placement
+
+ParquetFP based macro cell placer. Run `global_placement` before macro placement.
+The macro placer places macros/blocks honoring halos, channels and cell row "snapping".
+
+Approximately ceil((#macros/3)^(3/2)) sets corresponding to
+quadrisections of the initial placed mixed-size layout are explored and
+packed using ParquetFP-based annealing. The best resulting floorplan
+according to a heuristic evaluation function kept.
+
+```
+macro_placement [-halo {halo_x halo_y}]
+                [-channel {channel_x channel_y}]
+                [-fence_region {lx ly ux uy}]
+                [-snap_layer snap_layer_number]
+```
+
+-halo horizontal/vertical halo around macros (microns)
+-channel horizontal/vertical channel width between macros (microns)
+-fence_region - restrict macro placements to a region (microns). Defaults to the core area.
+-snap_layer_number - snap macro origins to this routing layer track
+
+Macros will be placed with max(halo * 2, channel) spacing between macros and the
+fence/die boundary. If not solutions are found, try reducing the channel/halo.
+
+#### Detailed Placement
+
+The `detailed_placement` command does detailed placement of instances
+to legal locations after global placement.
+
+```
+set_placement_padding -global|-instances insts|-masters masters
+                      [-left pad_left] [-right pad_right]
+detailed_placement [-max_displacement rows]
+check_placement [-verbose]
+filler_placement filler_masters
+optimimize_mirroring
+```
+
+The `set_placement_padding` command sets left and right padding in
+multiples of the row site width. Use the `set_placement_padding`
+command before legalizing placement to leave room for routing. Use the
+`-global` flag for padding that applies to all instances. Use the
+`instances` argument for instances specific padding.  The instances
+can be a list of instance name, or instance object returned by the SDC
+`get_cells` command. To specify padding for all instances of a common
+master, use the `-filter "ref_name == <name>" option to `get_cells`.
+
+The `set_power_net` command is used to set the power and ground
+special net names. The defaults are `VDD` and `VSS`.
+
+The `check_placement` command checks the placement legality. It returns `0` if the
+placement is legal.
+
+The `filler_placement` command fills gaps between detail placed instances
+to connect the power and ground rails in the rows. `filler_masters` is
+a list of master/macro names to use for filling the gaps. Wildcard matching
+is supported, so `FILL*` will match `FILLCELL_X1 FILLCELL_X16 FILLCELL_X2 FILLCELL_X32 FILLCELL_X4 FILLCELL_X8`.
+
+The `optimimize_mirroring` command mirrors instances about the Y axis
+in vane attempt to minimize the total wire length (hpwl).
 
 #### Gate Resizer
 
 Gate resizer commands are described below.
 The resizer commands stop when the design area is `-max_utilization
 util` percent of the core area. `util` is between 0 and 100.
+The resizer stops and reports and error if the max utilization is exceeded.
 
 ```
-set_wire_rc [-clock] [-data]
-	    [-layer layer_name]
+set_wire_rc [-clock] [-signal]
+            [-layer layer_name]
             [-resistance res ]
-	    [-capacitance cap]
-	    [-corner corner_name]
+            [-capacitance cap]
 ```
 
 The `set_wire_rc` command sets the resistance and capacitance used to
 estimate delay of routing wires.  Separate values can be specified for
-clock and data nets with the `-data` and `-clock` flags. Without
-either `-data` or `-clock` the resistance and capacitance for clocks
+clock and data nets with the `-signal` and `-clock` flags. Without
+either `-signal` or `-clock` the resistance and capacitance for clocks
 and data nets are set.  Use `-layer` or `-resistance` and
 `-capacitance`.  If `-layer` is used, the LEF technology resistance
 and area/edge capacitance values for the layer are used for a minimum
@@ -258,11 +488,33 @@ length of wire, not per square or per square micron.  The units for
 `-resistance` and `-capacitance` are from the first liberty file read,
 resistance_unit/distance_unit (typically kohms/micron) and liberty
 capacitance_unit/distance_unit (typically pf/micron or ff/micron).  If
-no distance units are not specied in the liberty file microns are
+distance units are not specified in the liberty file microns are
 used.
 
+The resistance and capacitance values in the OpenROAD database can be
+changed using the `set_layer_rc` command. This is useful if they are
+not in the LEF file or to override the values in the LEF.
+
 ```
-estimate_parasitics -placement
+set_layer_rc [-layer layer]
+             [-via via_layer]
+             [-capacitance cap]
+             [-resistance res] }
+```
+
+The units for capacitance are from the first Liberty file read.
+For example, usually pF/um^2 or fF/um^2 for capacitance and
+kohms/square or ohms/square for resistance. Via resistances are
+specified with the `via` keyword.
+
+```
+remove_buffers
+```
+
+Use the `remove_buffers` command to remove buffers inserted by synthesis. This step is recommended before using `repair_design` so it has more flexibility in buffering nets.
+
+```
+estimate_parasitics -placement|-global_routing
 ```
 
 Estimate RC parasitics based on placed component pin locations. If
@@ -272,7 +524,10 @@ wire. Use the `set_units` command to check units or `set_cmd_units` to
 change units. They should represent "average" routing layer resistance
 and capacitance. If the set_wire_rc command is not called before
 resizing, the default_wireload model specified in the first liberty
-file or with the SDC set_wire_load command is used to make parasitics.
+file or with the SDC set_wire_load command is used to make parasitics.  
+
+After the `global_route` command has been called the global routing topology
+and layers can be used to estimate parasitics  with the `-global_routing` flag.
 
 ```
 set_dont_use lib_cells
@@ -286,8 +541,8 @@ in all libraries.
 
 ```
 buffer_ports [-inputs]
-	     [-outputs]
-	     -buffer_cell buffer_cell
+             [-outputs]
+             [-max_utilization util]
 ```
 The `buffer_ports -inputs` command adds a buffer between the input and
 its loads.  The `buffer_ports -outputs` adds a buffer between the port
@@ -296,32 +551,21 @@ driver and the output port. If  The default behavior is
 
 ```
 repair_design [-max_wire_length max_length]
-              -buffer_cell buffer_cell
+              [-max_utilization util]
 ```
 
-The `repair_design` inserts buffers on nets to repair max slew, max
+The `repair_design` command inserts buffers on nets to repair max slew, max
 capacitance, max fanout violations, and on long wires to reduce RC
-delay in the wire. Use `-max_wire_length` to specify the maximum lenth
-of wires.  The resistance/capacitance values in `set_wire_rc` are used
-to find the wire delays.
+delay in the wire. It also resizes gates to normalize slews. 
+The resistance/capacitance values in `set_wire_rc` are used to find the
+wire delays. Use `-max_wire_length` to specify the maximum length of wires.
+The maximum wire length defaults to a value that minimizes the wire delay for the wire
+resistance/capacitance values specified by `set_wire_rc`.
 
 Use the `set_max_fanout` SDC command to set the maximum fanout for the design.
 ```
 set_max_fanout <fanout> [current_design]
 ```
-
-```
-resize [-libraries resize_libraries]
-       [-max_utilization util]
-```
-The `resize` command resizes gates to normalize slews.
-
-The `-libraries` option specifies which libraries to use when
-resizing. `resize_libraries` defaults to all of the liberty libraries
-that have been read. Some designs have multiple libraries with
-different transistor thresholds (Vt) and are used to trade off power
-and speed. Chosing a low Vt library uses more power but results in a
-faster design after the resizing step.
 
 ```
 repair_tie_fanout [-separation dist]
@@ -332,15 +576,26 @@ repair_tie_fanout [-separation dist]
 The `repair_tie_fanout` command connects each tie high/low load to a
 copy of the tie high/low cell.  `lib_port` is the tie high/low port,
 which can be a library/cell/port name or object returned by
-`get_lib_pins`. The tie high/low instance is separaated from the load
+`get_lib_pins`. The tie high/low instance is separated from the load
 by `dist` (in liberty units, typically microns).
 
 ```
-repair_hold_violations -buffer_cell buffer_cell
-                       [-max_utilization util]
+repair_timing [-setup]
+              [-hold]
+              [-slack_margin slack_margin]
+              [-allow_setup_violations]
+              [-max_utilization util]
+              [-max_buffer_percent buffer_percent]
 ```
-The `repair_hold_violations` command inserts buffers to repair hold
-check violations.
+The `repair_timing` command repairs setup and hold violations.
+It should be run after clock tree synthesis with propagated clocks.
+While repairing hold violations buffers are not inserted that will cause setup
+violations unless '-allow_setup_violations' is specified.
+Use `-slack_margin` to add additional slack margin. To specify
+different slack margins use separate `repair_timing` commands for setup and
+hold. Use `-max_buffer_percent` to specify a maximum number of buffers to
+insert to repair hold violations as a percent of the number of instances
+in the design. The default value for `buffer_percent` is 20, for 20%.
 
 ```
 report_design_area
@@ -365,16 +620,14 @@ read_sdc gcd.sdc
 
 set_wire_rc -layer metal2
 
-set buffer_cell BUF_X4
 set_dont_use {CLKBUF_* AOI211_X1 OAI211_X1}
 
-buffer_ports -buffer_cell $buffer_cell
-repair_design -max_wire_length 100 -buffer_cell $buffer_cell
-resize
+buffer_ports
+repair_design -max_wire_length 100
 repair_tie_fanout LOGIC0_X1/Z
 repair_tie_fanout LOGIC1_X1/Z
-repair_hold_violations -buffer_cell $buffer_cell
-resize
+# clock tree synthesis...
+repair_timing
 ```
 
 Note that OpenSTA commands can be used to report timing metrics before
@@ -387,7 +640,7 @@ report_tns
 report_wns
 report_checks
 
-resize
+repair_design
 
 report_checks
 report_tns
@@ -413,114 +666,52 @@ set_output_delay -clock clk 0 out
 report_checks
 ```
 
-#### Tapcell
-
-Tapcell and endcap insertion.
-
-```
-tapcell -tapcell_master <tapcell_master>
-        -endcap_master <endcap_master>
-        -endcap_cpp <endcap_cpp>
-        -distance <dist>
-        -halo_width_x <halo_x>
-        -halo_width_y <halo_y>
-        -tap_nwin2_master <tap_nwin2_master>
-        -tap_nwin3_master <tap_nwin3_master>
-        -tap_nwout2_master <tap_nwout2_master>
-        -tap_nwout3_master <tap_nwout3_master>
-        -tap_nwintie_master <tap_nwintie_master>
-        -tap_nwouttie_master <tap_nwouttie_master>
-        -cnrcap_nwin_master <cnrcap_nwin_master>
-        -cnrcap_nwout_master <cnrcap_nwout_master>
-        -incnrcap_nwin_master <incnrcap_nwin_master>
-        -incnrcap_nwout_master <incnrcap_nwout_master>
-        -tbtie_cpp <tbtie_cpp>
-        -no_cell_at_top_bottom
-        -add_boundary_cell
-```
-You can find script examples for both 45nm/65nm and 14nm in ```tapcell/etc/scripts```
-
-#### Global Placement
-
-RePlAce global placement.
-
-```
-global_placement [-timing_driven]
-                 [-bin_grid_count grid_count]
-```
-- **timing_driven**: Enable timing-driven mode
-- **grid_count**: [64,128,256,512,..., int]. Default: Defined by internal algorithm.
-
-Use the `set_wire_rc` command to set resistance and capacitance of
-estimated wires used for timing.
-
-#### Detailed Placement
-
-The `detailed_placement` command does detailed placement of instances
-to legal locations after global placement.
-
-```
-set_placement_padding -global|-instances insts|-masters masters
-                      [-left pad_left] [-right pad_right]
-detailed_placement [-max_displacement rows]
-check_placement [-verbose]
-filler_placement filler_masters
-set_power_net [-power power_name] [-ground ground_net]
-optimimize_mirroring
-```
-
-The `set_placement_padding` command sets left and right padding in
-multiples of the row site width. Use the `set_placement_padding`
-command before legalizing placement to leave room for routing. Use the
-`-global` flag for padding that applies to all instances. Use the
-`instances` argument for instances specific padding.  The instances
-can be a list of instance name, or instance object returned by the SDC
-`get_cells` command. To specify padding for all instances of a common
-master, use the `-filter "ref_name == <name>" option to `get_cells`.
-
-The `set_power_net` command is used to set the power and ground
-special net names. The defaults are `VDD` and `VSS`.
-
-The `check_placement` command checks the placement legality. It returns `1` if the
-placement is legal.
-
-The `filler_placement` command fills gaps between detail placed instances
-to connect the power and ground rails in the rows. `filler_masters` is
-a list of master/macro names to use for filling the gaps. Wildcard matching
-is supported, so `FILL*` will match `FILLCELL_X1 FILLCELL_X16 FILLCELL_X2 FILLCELL_X32 FILLCELL_X4 FILLCELL_X8`.
-
-The `optimimize_mirroring` command mirrors instances about the Y axis
-in vane attempt to minimize the total wire length (hpwl).
-
 #### Clock Tree Synthesis
 
-Create clock tree subnets. There are currently two ways one can run this command.
-The first is if the user does not have a characterization file. Thus, the wire segments are created manually based on the user parameters. 
+TritonCTS 2.0 is available under the OpenROAD app as ``clock_tree_synthesis`` command.
+The following tcl snippet shows how to call TritonCTS. TritonCTS 2.0 performs on-the-fly characterization.
+Thus there is no need to generate characterization data. On-the-fly characterization feature could still
+be optionally controlled by parameters specified to configure_cts_characterization command.
+Use set_wire_rc command to set clock routing layer.
 
 ```
+read_lef "mylef.lef"
+read_liberty "myliberty.lib"
+read_def "mydef.def"
+read_verilog "myverilog.v"
+read_sdc "mysdc.sdc"
+set_wire_rc -clock -layer metal5
+
+configure_cts_characterization [-max_slew <max_slew>] \
+                               [-max_cap <max_cap>] \
+                               [-slew_inter <slew_inter>] \
+                               [-cap_inter <cap_inter>]
+
 clock_tree_synthesis -buf_list <list_of_buffers> \
-                     -sqr_cap <cap_per_sqr> \
-                     -sqr_res <res_per_sqr> \
                      [-root_buf <root_buf>] \
-                     [-max_slew <max_slew>] \
-                     [-max_cap <max_cap>] \
-                     [-slew_inter <slew_inter>] \
-                     [-cap_inter <cap_inter>] \
                      [-wire_unit <wire_unit>] \
                      [-clk_nets <list_of_clk_nets>] \
                      [-out_path <lut_path>] \
-                     [-characterization_only]
-```
+                     [-post_cts_disable] \
+                     [-distance_between_buffers] \
+                     [-branching_point_buffers_distance] \
+                     [-clustering_exponent] \
+                     [-clustering_unbalance_ratio] \
+                     [-sink_clustering_enable] \
+                     [-sink_clustering_size <cluster_size>] \
+                     [-sink_clustering_max_diameter <max_diameter>]
 
+
+write_def "final.def"
+```
+Argument description:
 - ``-buf_list`` are the master cells (buffers) that will be considered when making the wire segments.
-- ``-sqr_cap`` is the capacitance (in picofarad) per micrometer (thus, the same unit that is used in the LEF syntax) to be used in the wire segments. 
-- ``-sqr_res`` is the resistance (in ohm) per micrometer (thus, the same unit that is used in the LEF syntax) to be used in the wire segments. 
 - ``-root_buffer`` is the master cell of the buffer that serves as root for the clock tree. 
 If this parameter is omitted, the first master cell from ``-buf_list`` is taken.
 - ``-max_slew`` is the max slew value (in seconds) that the characterization will test. 
-If this parameter is omitted, the code tries to obtain the value from the liberty file.
+If this parameter is omitted, the code would use max slew value for specified buffer in buf_list from liberty file.
 - ``-max_cap`` is the max capacitance value (in farad) that the characterization will test. 
-If this parameter is omitted, the code tries to obtain the value from the liberty file.
+If this parameter is omitted, the code would use max cap value for specified buffer in buf_list from liberty file.
 - ``-slew_inter`` is the time value (in seconds) that the characterization will consider for results. 
 If this parameter is omitted, the code gets the default value (5.0e-12). Be careful that this value can be quite low for bigger technologies (>65nm).
 - ``-cap_inter`` is the capacitance value (in farad) that the characterization will consider for results. 
@@ -530,29 +721,19 @@ If this parameter is omitted, the code gets the value from ten times the height 
 - ``-clk_nets`` is a string containing the names of the clock roots. 
 If this parameter is omitted, TritonCTS looks for the clock roots automatically.
 - ``-out_path`` is the output path (full) that the lut.txt and sol_list.txt files will be saved. This is used to load an existing characterization, without creating one from scratch.
-- ``-only_characterization`` is a flag that, when specified, makes so that only the library characterization step is run and no clock tree is inserted in the design.
-
-Instead of creating a characterization, you can use use the following parameters to load a characterization file.
-
-```
-clock_tree_synthesis -lut_file <lut_file> \
-                     -sol_list <sol_list_file> \
-                     -root_buf <root_buf> \
-                     [-wire_unit <wire_unit>] \
-                     [-clk_nets <list_of_clk_nets>] 
-```
-
-- ``-lut_file`` (mandatory) is the file containing delay, power and other metrics for each segment.
-- ``-sol_list`` (mandatory) is the file containing the information on the topology of each segment (wirelengths and buffer masters).
-- ``-sqr_res`` (mandatory) is the resistance (in ohm) per database units to be used in the wire segments. 
-- ``-root_buffer`` (mandatory) is the master cell of the buffer that serves as root for the clock tree. 
-If this parameter is omitted, you can use the ``-buf_list`` argument, using the first master cell. If both arguments are omitted, an error is raised.
-- ``-wire_unit`` (optional) is the minimum unit distance between buffers for a specific wire, based on your ``-lut_file``. 
-If this parameter is omitted, the code gets the value from the header of the ``-lut_file``. For the old technology characterization, described [here](https://github.com/The-OpenROAD-Project/TritonCTS/blob/master/doc/Technology_characterization.md), this argument is mandatory, and omitting it raises an error.
-- ``-clk_nets`` (optional) is a string containing the names of the clock roots. 
+- ``-post_cts_disable`` is a flag that, when specified, disables the post-processing operation for outlier sinks (buffer insertion on 10% of the way between source and sink). 
+- ``-distance_between_buffers`` is the distance (in micron) between buffers that TritonCTS should use when creating the tree. When using this parameter, the clock tree algorithm is simplified, and only uses a fraction of the segments from the LUT.
+- ``-branching_point_buffers_distance`` is the distance (in micron) that a branch has to have in order for a buffer to be inserted on a branch end-point. This requires the ``-distance_between_buffers`` value to be set.
+- ``-clustering_exponent`` is a value that determines the power used on the difference between sink and means on the CKMeans clustering algorithm. If this parameter is omitted, the code gets the default value (4).
+- ``-clustering_unbalance_ratio`` is a value that determines the maximum capacity of each cluster during CKMeans. A value of 50% means that each cluster will have exactly half of all sinks for a specific region (half for each branch). If this parameter is omitted, the code gets the default value (0.6).
+- ``-sink_clustering_enable`` enables pre-clustering of sinks to create one level of sub-tree before building H-tree. Each cluster is driven by buffer which becomes end point of H-tree structure.
+- ``-sink_clustering_size`` specifies the maximum number of sinks per cluster. Default value is 20.
+- ``sink_clustering_max_diameter`` specifies maximum diameter (in micron) of sink cluster. Default value is 50.
+- ``-clk_nets`` is a string containing the names of the clock roots. 
 If this parameter is omitted, TritonCTS looks for the clock roots automatically.
 
 Another command available from TritonCTS is ``report_cts``. It is used to extract metrics after a successful ``clock_tree_synthesis`` run. These are: Number of Clock Roots, Number of Buffers Inserted, Number of Clock Subnets, and Number of Sinks.
+The following tcl snippet shows how to call ``report_cts``.
 
 ```
 read_lef "mylef.lef"
@@ -561,166 +742,163 @@ read_def "mydef.def"
 read_verilog "myverilog.v"
 read_sdc "mysdc.sdc"
 
+set_wire_rc -clock -layer metal5
 report_checks
 
-clock_tree_synthesis -lut_file "lut.txt" \
-                     -sol_list "sol_list.txt" \
-                     -root_buf "BUF_X4" \
+clock_tree_synthesis -root_buf "BUF_X4" \
+                     -buf_list "BUF_X4" \
                      -wire_unit 20 
 
 report_cts [-out_file "file.txt"]
 ```
-
-- ``-out_file`` (optional) is the file containing the TritonCTS reports.
+``-out_file`` (optional) is the file containing the TritonCTS reports.
 If this parameter is omitted, the metrics are shown on the standard output.
-
 
 #### Global Routing
 
-FastRoute global route.
-Generate routing guides given a placed design.
+Global router options and commands are described below. 
 
 ```
-fastroute -output_file out_file
-          -capacity_adjustment <cap_adjust>
-          -min_routing_layer <min_layer>
-          -max_routing_layer <max_layer>
-          -pitches_in_tile <pitches>
-          -layers_adjustments <list_of_layers_to_adjust>
-          -regions_adjustments <list_of_regions_to_adjust>
-          -nets_alphas_priorities <list_of_alphas_per_net>
-          -verbose <verbose>
-          -unidirectional_routing
-          -clock_net_routing
+global_route [-guide_file out_file] \
+             [-tile_size tile_size] \
+             [-verbose verbose] \
+             [-overflow_iterations iterations] \
+             [-grid_origin {x y}] \
+             [-report_congestion congest_file] \
+             [-clock_pdrev_fanout fanout] \
+             [-clock_topology_priority priority] \
+             [-clock_tracks_cost clock_tracks_cost] \
+             [-allow_overflow]
+
 ```
 
 Options description:
-- **capacity_adjustment**: Set global capacity adjustment (e.g.: -capacity_adjustment *0.3*)
-- **min_routing_layer**: Set minimum routing layer (e.g.: -min_routing_layer *2*)
-- **max_routing_layer**: Set maximum routing layer (e.g.: max_routing_layer *9*)
-- **pitches_in_tile**: Set the number of pitches inside a GCell
-- **layers_adjustments**: Set capacity adjustment to specific layers (e.g.: -layers_adjustments {{<layer> <reductionPercentage>} ...})
-- **regions_adjustments**: Set capacity adjustment to specific regions (e.g.: -regions_adjustments {{<minX> <minY> <maxX> <maxY> <layer> <reductionPercentage>} ...})
-- **nets_alphas_priorities**: Set alphas for specific nets when using clock net routing (e.g.: -nets_alphas_priorities {{<net_name> <alpha>} ...})
-- **verbose**: Set verbose of report. 0 for less verbose, 1 for medium verbose, 2 for full verbose (e.g.: -verbose 1)
-- **unidirectional_routing**: Activate unidirectional routing *(flag)*
-- **clock_net_routing**: Activate clock net routing *(flag)*
-
-###### NOTE 1: if you use the flag *unidirectional_routing*, the minimum routing layer will be assigned as "2" automatically
-###### NOTE 2: the first routing layer of the design have index equal to 1
-###### NOTE 3: if you use the flag *clock_net_routing*, only guides for clock nets will be generated
-
-
-#### Logical and Physical Optimizations
-
-OpenPhySyn performs additional timing and area optimization.
-
+- **guide_file**: Set the output guides file name (e.g.: -guide_file route.guide")
+- **tile_size**: Set the number of pitches inside a GCell (e.g.: -tile_size *20*)
+- **verbose**: Set verbose of report. 0 for less verbose, 1 for medium verbose, 2 for full verbose (e.g.: -verbose *1*)
+- **overflow_iterations**: Set the number of iterations to remove the overflow of the routing (e.g.: -overflow_iterations *50*)
+- **grid_origin**: Set the origin of the routing grid (e.g.: -grid_origin {1 1})
+- **report_congestion**: Create a text file with the congestion report of the GCells (e.g.: -report_congestion "congest")
+- **clock_pdrev_fanout**: Set the minimum fanout to use PDRev for the routing topology construction of the clock nets (e.g.: -clock_pdrev_fanout 5)
+- **clock_topology_priority**: Set the PDRev routing topology construction priority for clock nets.
+See `set_pdrev_topology_priority` command description for more details about PDRev and topology priority (e.g.: -topology_priority 0.6)
+- **clock_tracks_cost**: Set the routing tracks consumption by clock nets
+- **allow_overflow**: Allow global routing results with overflow
 
 ```
-optimize_logic
-        [-tiehi tiehi_cell_name] 
-        [-tielo tielo_cell_name] 
+set_layer_ranges [-layers min-max] \
+                 [-clock_layers min-max]
 ```
-The `optimize_logic` command should be run after the logic synthesis on hierarical designs to perform logic optimization; currently, it performs constant propagation to reduce the design area. You can optionally specify the name of tie-hi/tie-lo liberty cell names to use for the optimization.
 
-
-```
-repair_timing
-        [-capacitance_violations]
-        [-transition_violations]
-        [-negative_slack_violations]
-        [-iterations iteration_count]
-        [-buffers buffer_cells]
-        [-inverters inverter cells]
-        [-auto_buffer_library <single|small|medium|large|all>]
-        [-no_minimize_buffer_library]
-        [-auto_buffer_library_inverters_enabled]
-        [-buffer_disabled]
-        [-resize_disabled]
-        [-pin_swap_disabled]
-        [-capacitance_pessimism_factor factor]
-        [-transition_pessimism_factor factor]
-        [-minimum_cost_buffer_enabled]
-        [-legalization_frequency num_edits]
-        [-legalize_each_iteration iterations]
-        [-legalize_eventually]
-        [-post_place]
-        [-post_route]
-        [-minimum_gain gain]
-        [-high_effort]
-        [-maximum_negative_slack_paths count]
-        [-maximum_negative_slack_path_depth count]
-        [-pins pin_names]
-```
-The `repair_timing` command repairs negative slack, maximum capacitance and transition violations by buffer tree insertion, gate sizing, and pin-swapping.
-
-`repair_timing` options:
--   `[-capacitance_violations]`: Repair capacitance violations.
--   `[-transition_violations]`: Repair transition violations.
--   `[-negative_slack_violations]`: Repair paths with negative slacks.
--   `[-iterations iterations]`: Maximum number of iterations.
--   `[-buffers buffer_cells]`: Manually specify buffer cells to use.
--   `[-inverters inverter cells]`: Manually specify inverter cells to use.
--   `[-auto_buffer_library <single|small|medium|large|all>]`: Auto-select buffer library.
--   `[-no_minimize_buffer_library]`: Do not run initial pruning phase for buffer selection.
--   `[-auto_buffer_library_inverters_enabled]`: Include inverters in the selected buffer library.
--   `[-buffer_disabled]`: Disable all buffering.
--   `[-resize_disabled]`: Disable driver sizing.
--   `[-pin_swap_disabled]`: Disable pin-swapping.
--   `[-transition_pessimism_factor factor]` Scaling factor for transition violation limits, default is 1.0, should be non-negative, < 1.0 is pessimistic, 1.0 is ideal, > 1.0 is optimistic (default is 1.0).
--   `[-capacitance_pessimism_factor factor]` Scaling factor for capacitance violation limits, default is 1.0, should be non-negative, < 1.0 is pessimistic, 1.0 is ideal, > 1.0 is optimistic (default is 1.0).
--   `[-minimum_cost_buffer_enabled]`: Enable minimum cost buffering.
--   `[-legalization_frequency <num_edits>]`: Legalize after how many edits.
--   `[-legalize_eventually]`: Legalize at the end of the optimization.
--   `[-legalize_each_iteration]`: Legalize after each iteration.
--   `[-post_place|-post_route]`: Post-placement phase mode or post-routing phase mode (not currently supported).
--   `[-minimum_gain <unit_time>]`: Minimum slack gain to accept an optimization.
--   `[-high_effort]`: Trade-off runtime versus optimization quality by weaker pruning.
--   `[-no_resize_for_negative_slack]`: Disable resizing when solving negative slack violations (enhances runtime).
--   `[-maximum_negative_slack_paths count]`: Maximum number of negative slack paths to try to optimize.
--   `[-maximum_negative_slack_path_depth count]`: Maximum depth per negative slack path to try to optimize.
--   `[-pins pin_names]`: Manually select the pins to optimize.
+The `set_layer_ranges` command sets the minimum and maximum routing layers for signal nets, with the `-layers` option,
+and the the minimum and maximum routing layers for clock nets, with the `-clock_layers` option
+Example: `set_layer_ranges -layers 2-10 -clock_layers 6-9`
 
 ```
-pin_swap
-       -path_count count
-       [-power]
+set_macro_extension extension
 ```
-The `pin_swap` command performs additional timing optimization by commutative pin swapping.
-
+The `set_macro_extension` command sets the number of GCells added to the blocakges boundaries from macros
+Example: `set_macro_extension 2`
 
 ```
-optimize_fanout
-        -buffer_cell buffer_cell_name
-        -max_fanout max_fanout
+set_global_routing_layer_adjustment layer adjustment
 ```
-The `optimize_fanout` command can be run after the logical synthesis to perform basic buffering based on the number of fanout pins.
 
+The `set_global_routing_layer_adjustment` command sets routing resources adjustments in the routing layers of the design.
+You can set adjustment for a specific layer, e.g.: `set_global_routing_layer_adjustment 4 0.5` reduces the routing resources
+of routing layer 4 in 50%.
+You can set adjustment for all layers at once using `*`, e.g.: `set_global_routing_layer_adjustment * 0.3` reduces
+the routing resources of all routing layers in 30%.
+You can set adjustment for a layer range, e.g.: `set_global_routing_layer_adjustment 4-8 0.3` reduces
+the routing resources of routing layers  4, 5, 6 7 and 8 in 30%.
 
 ```
-cluster_buffers
-  [-cluster_threshold diameter]
-  [-cluster_size single|small|medium|large|all]
+set_global_routing_layer_pitch layer pitch
 ```
-The `cluster_buffers` command can be used to automatically select representative set of buffers through k-center clustering.
+The `set_global_routing_layer_pitch` command sets the pitch for routing tracks in a specific layer.
+You can call it multiple times for different layers.
+Example: `set_global_routing_layer_pitch 6 1.34`.
 
+```
+set_pdrev_topology_priority netName alpha
+```
+FastRoute has an alternative tool for the routing topology construction, called PDRev. You can define the topology construction
+priority of PDRev between wire length and skew, using the `alpha` parameter.
+The `set_pdrev_topology_priority` command sets the PDRev routing topology construction priority for specific nets.
+Alpha is a positive float between 0.0 and 1.0, where alpha close to 0.0 generates topologies with shorter wire length,
+and alpha close to 1.0 generates topologies with lower skew. For more information about PDRev, check the paper in
+`src/FastRoute/src/pdrev/papers/PDRev.pdf`
+You can call it multiple times for different nets.
+Example: `set_pdrev_topology_priority clk 0.3` sets an alpha value of 0.3 for net *clk*.
 
+```
+set_global_routing_region_adjustment {lower_left_x lower_left_y upper_right_x upper_right_y}
+                                     -layer layer -adjustment adjustment
+```
+The `set_global_routing_region_adjustment` command sets routing resources adjustments in a specific region of the design.
+The region is defined as a rectangle in a routing layer.
+Example: `set_global_routing_region_adjustment {1.5 2 20 30.5}
+                                               -layer 4 -adjustment 0.7`
 
+```
+repair_antennas diodeCellName/diodePinName
+```
+The repair_antenna command evaluates the global routing results looking for antenna violations, and repairs the violations
+by inserting diodes. The input for this command is the diode cell and pin names.
+It uses the  `antennachecker` tool to identify the antenna violations and return the exact number of diodes necessary to
+fix the antenna violation.
+Example: `repair_antenna sky130_fd_sc_hs__diode_2/DIODE`
 
+```
+write_guides file_name
+```
+The `write_guides` generates the guide file from the routing results.
+Example: `write_guides route.guide`.
+
+To estimate RC parasitics based on global route results, use the `-global_routing`
+option of the `estimate_parasitics` command.
+
+```
+estimate_parasitics -global_routing
+```
 
 #### PDN analysis
 
-PDNSim PDN checker searches for floating PDN stripes.
+PDNSim PDN checker searches for floating PDN stripes on the power and ground nets. 
 
-PDNSim reports worst IR drop given a placed and PDN synthesized design.
+PDNSim reports worst IR drop and worst current density in a power wire drop given a placed and PDN synthesized design.
+
+PDNSim spice netlist writer for power wires.
+
+Commands for the above three functionalities are below: 
 
 ```
-check_power_grid -net <VDD/VSS>
-analyze_power_grid -vsrc <voltage_source_location_file>
-write_pg_spice -vsrc <voltage_source_location_file> -outfile <netlist.sp>
+set_pdnsim_net_voltage -net <net_name> -voltage <voltage_value>
+check_power_grid -net <net_name>
+analyze_power_grid -vsrc <voltage_source_location_file> \
+                   -net <net_name> \ 
+                   [-outfile <filename>] \
+                   [-enable_em] \
+                   [-em_outfile <filename>]
+                   [-dx]
+                   [-dy]
+                   [-em_outfile <filename>]
+write_pg_spice -vsrc <voltage_source_location_file> -outfile <netlist.sp> -net <net_name>
 ```
 
 Options description:
-- **vsrc**: Set the location of the power C4 bumps/IO pins
+- **vsrc**: (optional) file to set the location of the power C4 bumps/IO pins.
+        [Vsrc_aes.loc file](https://github.com/The-OpenROAD-Project/PDNSim/blob/master/test/aes/Vsrc.loc) 
+        for an example with a description specified [here](https://github.com/The-OpenROAD-Project/PDNSim/blob/master/doc/Vsrc_description.md).
+- **dx,dy**: (optional) these arguments set the bump pitch to decide the voltage
+  source location in the absence of a vsrc file. Default bump pitch of 140um
+  used in absence of these arguments and vsrc 
+- **net**: (mandatory) is the name of the net to analyze, power or ground net name
+- **enable_em**: (optional) is the flag to report current per power grid segment
+- **outfile**: (optional) filename specified per-instance voltage written into file
+- **em_outfile**: (optional) filename to write out the per segment current values into a file, 
+  can be specified only if enable_em is flag exists
+- **voltage**: Sets the voltage on a specific net. If this command is not run,
+  the voltage value is obtained from operating conditions in the liberty.
 
 ###### Note: See the file [Vsrc_aes.loc file](https://github.com/The-OpenROAD-Project/PDNSim/blob/master/test/aes/Vsrc.loc) for an example with a description specified [here](https://github.com/The-OpenROAD-Project/PDNSim/blob/master/doc/Vsrc_description.md).

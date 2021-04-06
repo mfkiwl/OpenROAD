@@ -28,62 +28,7 @@
 #OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 #OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#sta::define_cmd_args "pdngen" {[-verbose] config_file}
-
-# Messages:
-# 
-# Information
-# 8 "Design Name is $design_name"
-# 9 "Reading technology data"
-# 10 "Inserting macro grid for [llength [dict keys $instances]] macros"
-# 11 "****** INFO ******"
-# 12 "**** END INFO ****"
-# 13 "Inserting stdcell grid - [dict get $specification name]"
-# 14 "Inserting stdcell grid"
-# 15 "Writing to database"
-# 16 "##Power Delivery Network Generator: Generating PDN"
-# 16 "##  config: $config"
-# 32 "Generating blockages for TrionRoute"
-# 34 "Inserting macro grid for instance $instance"
-#
-# Warning
-# 1 "run_pdngen is deprecated. Use pdngen."
-# 2 "No shapes on layer $l1 for $tag"
-# 3 "No shapes on layer $l2 for $tag"
-# 4 "Unexpected number of points in connection shape ($l1,$l2 $tag [llength $points])"
-# 5 (points list)
-# 6 "Unexpected number of points in shape ($lay $signal_type [llength $points])"
-# 7 (points list)
-# 17 "No stdcell grid specification found - no rails inserted"
-# 18 "No macro grid specifications found - no straps added"
-# 35 "No track information found for layer $layer_name"
-# 36 "Unexpected number of points in pin shape ($lay $signal_type [llength $points])"
-# 37 (points list)
-# 
-# Error
-# 35 "Illegal via does not meet minimum cut rule"
-# 36 "Attempt to add illegal via at : ([expr 1.0 * [lindex $via_location 0] / $def_units] [expr 1.0 * [lindex $via_location 1] / $def_units]), via will not be added"
-# 37 "Cannot find pin $term_name on instance [$inst getName] ([[$inst getMaster] getName])"
-#
-# Critical
-# 19 "Cannot find layer $layer_name in loaded technology"
-# 20 "Failed to read CUTCLASS property '$line'"
-# 21 "Failed to read ENCLOSURE property '$line'"
-# 22 "Cant find lower metal layer $layer1"
-# 23 "Cant find upper metal layer $layer2"
-# 24 "Missing key [dict get $intersection rule]\nAvailable keys [dict keys $logical_viarules]"
-# 25 "Unexpected row orientation $orient for row [$row getName]"
-# 26 "Invalid direction \"[get_dir $layer]\" for metal layer ${layer}. Should be either \"hor\" or \"ver\"."
-# 27 "Illegal orientation $orientation specified"
-# 28 "File $PDN_cfg does not exist, or exists but empty"
-# 29 "Illegal number of elements defined for ::halo \"$::halo\" (1, 2 or 4 allowed)"
-# 30 "Layer specified for std. cell rails '$layer' not in list of layers."
-# 31 "No matching grid specification found for $instance"
-# 33 "Unknown direction for layer $layer_name"
-# 41 "Need to define pwr_pads and gnd_pads in config file to use pad_offset option"
-#
-# 9999 - Unexpected error
-#
+sta::define_cmd_args "pdngen" {[-verbose] config_file}
 
 proc pdngen { args } {
   sta::parse_key_args "pdngen" args \
@@ -92,23 +37,15 @@ proc pdngen { args } {
   set verbose [info exists flags(-verbose)]
 
   sta::check_argc_eq1 "pdngen" $args
-  set config_file $args
+  set config_file [file nativename [lindex $args 0]]
 
   if {[catch {pdngen::apply_pdn $config_file $verbose } error_msg options]} {
-    if {[regexp {\[PDNG\-[0-9]*\]} $error_msg]} {
-      puts $error_msg
-    } else {
+    if {![regexp {PDN\-[0-9]*} $error_msg]} {
       puts $options
-      pdngen::critical 9999 "Unexpected error: $error_msg"
+      utl::error "PDN" 9999 "Unexpected error: $error_msg"
     }
     error "Execution stopped"
   }
-}
-
-# temporary alias to old name
-proc run_pdngen { args } {
-  pdngen::warning 1 "run_pdngen is deprecated. Use pdngen."
-  pdngen $args
 }
 
 namespace eval pdngen {
@@ -133,7 +70,6 @@ variable site_width
 variable site_name
 variable row_height
 variable metal_layers {}
-variable layers {}
 variable blockages {} 
 variable padcell_blockages {} 
 variable instances {}
@@ -142,12 +78,9 @@ variable template {}
 variable default_cutclass {}
 variable twowidths_table {}
 variable twowidths_table_wrongdirection {}
+variable stdcell_area ""
 
 #This file contains procedures that are used for PDN generation
-proc set_message {level message} {
-  return "\[$level\] $message"
-}
-
 proc debug {message} {
   set state [info frame -1]
   set str ""
@@ -160,23 +93,7 @@ proc debug {message} {
   if {[dict exists $state line]} {
     set str "$str[dict get $state line]"
   }
-  puts [set_message DEBUG "$str: $message"]
-}
-
-proc information {id message} {
-  puts [set_message INFO [format "\[PDNG-%04d\] %s" $id $message]]
-}
-
-proc warning {id message} {
-  puts [set_message WARN [format "\[PDNG-%04d\] %s" $id $message]]
-}
-
-proc err {id message} {
-  puts [set_message ERROR [format "\[PDNG-%04d\] %s" $id $message]]
-}
-
-proc critical {id message} {
-  error [set_message CRIT [format "\[PDNG-%04d\] %s" $id $message]]
+  puts "\[DEBUG\] $str: $message"
 }
 
 proc lmap {args} {
@@ -197,7 +114,7 @@ proc get_dir {layer_name} {
   }
   
   if {![dict exists $layers $layer_name direction]} {
-    critical 33 "Unknown direction for layer $layer_name"
+    utl::error "PDN" 33 "Unknown direction for layer $layer_name"
   }
   return [dict get $layers $layer_name direction]
 }
@@ -221,15 +138,19 @@ proc is_rails_layer {layer} {
   return [expr {[lsearch -exact [get_rails_layers] $layer] > -1}]
 }
 
+proc via_number {layer_rule1 layer_rule2} {
+  return [expr [[$layer_rule1 getLayer] getNumber] - [[$layer_rule2 getLayer] getNumber]]
+}
+
 proc init_via_tech {} {
   variable tech
   variable def_via_tech
   
   set def_via_tech {}
   foreach via_rule [$tech getViaGenerateRules] {
-    set lower [$via_rule getViaLayerRule 0]
-    set upper [$via_rule getViaLayerRule 1]
-    set cut   [$via_rule getViaLayerRule 2]
+    set levels [list [$via_rule getViaLayerRule 0] [$via_rule getViaLayerRule 1] [$via_rule getViaLayerRule 2]]
+    set levels [lsort -command via_number $levels]
+    lassign $levels lower cut upper
 
     dict set def_via_tech [$via_rule getName] [list \
       lower [list layer [[$lower getLayer] getName] enclosure [$lower getEnclosure]] \
@@ -237,6 +158,7 @@ proc init_via_tech {} {
       cut   [list layer [[$cut getLayer] getName] spacing [$cut getSpacing] size [list [[$cut getRect] dx] [[$cut getRect] dy]]] \
     ]
   }
+  # debug "def_via_tech: $def_via_tech"
 }
 
 proc set_prop_lines {obj prop_name} {
@@ -272,7 +194,7 @@ proc find_layer {layer_name} {
   variable tech
 
   if {[set layer [$tech findLayer $layer_name]] == "NULL"} {
-    critical 19 "Cannot find layer $layer_name in loaded technology"
+    utl::error "PDN" 19 "Cannot find layer $layer_name in loaded technology"
   }
   return $layer
 }
@@ -448,7 +370,7 @@ proc read_cutclass {layer_name} {
   while {![empty_propline]} {
     set line [read_propline]
     if {![regexp {CUTCLASS\s+([^\s]+)\s+WIDTH\s+([^\s]+)} $line - cut_class width]} {
-      critical 20 "Failed to read CUTCLASS property '$line'"
+      utl::error "PDN" 20 "Failed to read CUTCLASS property '$line'"
     }
     if {[regexp {LENGTH\s+([^\s]+)} $line - length]} {
       set area [expr $width * $length]
@@ -514,7 +436,7 @@ proc read_enclosures {layer_name} {
     set width [expr round($width * $def_units)]
     
     if {![regexp {ENCLOSURE CUTCLASS\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)} $line - cut_class overlap1 overlap2]} {
-      critical 21 "Failed to read ENCLOSURE property '$line'"
+      utl::error "PDN" 21 "Failed to read ENCLOSURE property '$line'"
     }
     dict set enclosure overlap1 [expr round($overlap1 * $def_units)]
     dict set enclosure overlap2 [expr round($overlap2 * $def_units)]
@@ -1024,7 +946,7 @@ proc determine_num_via_rows {via_info constraints} {
   return $rows
 }
 
-proc init_via_width_height {lower_layer width height constraints} {
+proc init_via_width_height {via_info lower_layer width height constraints} {
   variable def_units
   variable upper_width
   variable lower_width
@@ -1042,7 +964,6 @@ proc init_via_width_height {lower_layer width height constraints} {
   variable xcut_spacing
   variable ycut_spacing
 
-  set via_info [lindex [select_via_info $lower_layer] 1]
   set upper_layer [dict get $via_info upper layer]
 
   set xcut_pitch [lindex [dict get $via_info cut spacing] 0]
@@ -1117,8 +1038,7 @@ proc get_enclosure_by_direction {layer xenc yenc max_enclosure min_enclosure} {
   return $info
 }
 
-proc via_generate_rule {rule_name rows columns constraints} {
-  variable via_info
+proc via_generate_rule {viarule_name via_info rule_name rows columns constraints} {
   variable xcut_pitch
   variable ycut_pitch
   variable xcut_spacing
@@ -1149,7 +1069,7 @@ proc via_generate_rule {rule_name rows columns constraints} {
 
   return [list [list \
     name $rule_name \
-    rule [lindex [select_via_info [dict get $via_info lower layer]] 0] \
+    rule $viarule_name \
     cutsize [dict get $via_info cut size] \
     layers [list [dict get $via_info lower layer] [dict get $via_info cut layer] [dict get $via_info upper layer]] \
     cutspacing [list $xcut_spacing $ycut_spacing] \
@@ -1166,8 +1086,7 @@ proc via_generate_rule {rule_name rows columns constraints} {
   ]]
 }
 
-proc via_generate_array_rule {rule_name rows columns} {
-  variable via_info
+proc via_generate_array_rule {viarule_name via_info rule_name rows columns} {
   variable xcut_pitch
   variable ycut_pitch
   variable xcut_spacing
@@ -1212,7 +1131,7 @@ proc via_generate_array_rule {rule_name rows columns} {
     set array_spacing [expr max($xcut_spacing,$ycut_spacing,[dict get $spacing_rule arraycuts $use_array_size spacing])]
 
     set rule [list \
-      rule [lindex [select_via_info [dict get $via_info lower layer]] 0] \
+      rule $viarule_name \
       cutsize [dict get $via_info cut size] \
       layers [list [dict get $via_info lower layer] [dict get $via_info cut layer] [dict get $via_info upper layer]] \
       cutspacing [list $xcut_spacing $ycut_spacing] \
@@ -1285,7 +1204,7 @@ proc via_generate_array_rule {rule_name rows columns} {
 
     set rule [list \
       name $rule_name \
-      rule [lindex [select_via_info [dict get $via_info lower layer]] 0] \
+      rule $viarule_name \
       cutsize [dict get $via_info cut size] \
       layers [list [dict get $via_info lower layer] [dict get $via_info cut layer] [dict get $via_info upper layer]] \
       cutspacing [list $xcut_spacing $ycut_spacing] \
@@ -1305,10 +1224,9 @@ proc via_generate_array_rule {rule_name rows columns} {
   return $rule_list
 }
 
-proc via_split_cuts_rule {rows columns constraints} {
+proc via_split_cuts_rule {rule_name via_info rows columns constraints} {
   variable tech
   variable def_units
-  variable via_info
   variable min_lower_enclosure
   variable max_lower_enclosure
   variable min_upper_enclosure
@@ -1331,7 +1249,7 @@ proc via_split_cuts_rule {rows columns constraints} {
   
   set rule {}
   set rule [list \
-    rule [lindex [select_via_info $lower] 0] \
+    rule $rule_name \
     cutsize [dict get $via_info cut size] \
     layers [list $lower [dict get $via_info cut layer] $upper] \
     cutspacing [list $xcut_spacing $ycut_spacing] \
@@ -1431,7 +1349,7 @@ proc via_split_cuts_rule {rows columns constraints} {
 
 # Given the via rule expressed in via_info, what is the via with the largest cut area that we can make
 # Try using a via generate rule
-proc get_via_option {lower width height constraints} {
+proc get_via_option {viarule_name via_info lower width height constraints} {
   variable upper_width
   variable lower_width
   variable upper_height
@@ -1441,19 +1359,17 @@ proc get_via_option {lower width height constraints} {
   variable max_lower_enclosure
   variable min_upper_enclosure
   variable max_upper_enclosure
-  variable via_info
   variable default_cutclass
   variable grid_data
   variable via_location
   variable def_units
 
   # debug "{$lower $width $height}"
-  set via_info [lindex [select_via_info $lower] 1]
   set lower_dir [get_dir $lower]
 
   set upper [dict get $via_info upper layer]
 
-  init_via_width_height $lower $width $height $constraints
+  init_via_width_height $via_info $lower $width $height $constraints
   # debug "lower: $lower, width: $width, height: $height, lower_width: $lower_width, lower_height: $lower_height"
   get_via_enclosure $via_info [expr min($lower_width,$lower_height)] [expr min($upper_width,$upper_height)]
 
@@ -1469,13 +1385,13 @@ proc get_via_option {lower width height constraints} {
   
   if {[dict exists $constraints split_cuts] && ([lsearch -exact [dict get $constraints split_cuts] $lower] > -1 || [lsearch -exact [dict get $constraints split_cuts] $upper] > -1)} {
     # debug "via_split_cuts_rule"
-    set rules [via_split_cuts_rule $rows $columns $constraints]
+    set rules [via_split_cuts_rule $viarule_name $via_info $rows $columns $constraints]
   } elseif {[use_arrayspacing [dict get $via_info cut layer] $rows $columns]} {
     # debug "via_generate_array_rule"
-    set rules [via_generate_array_rule [get_viarule_name $lower $width $height] $rows $columns]
+    set rules [via_generate_array_rule $viarule_name $via_info [get_viarule_name $lower $width $height] $rows $columns]
   } else {
     # debug "via_generate_rule"
-    set rules [via_generate_rule [get_viarule_name $lower $width $height] $rows $columns $constraints]
+    set rules [via_generate_rule $viarule_name $via_info [get_viarule_name $lower $width $height] $rows $columns $constraints]
   }
 
   # Check minimum_cuts
@@ -1502,7 +1418,7 @@ proc get_via_option {lower width height constraints} {
     }
     set min_cut_rule [get_minimumcuts $lower_layer $lower_width fromabove $cut_class]
     if {$num_cuts < $min_cut_rule} {
-      err 35 "Illegal via number of cuts ($num_cuts) does not meet minimum cut rule ($min_cut_rule) for $lower_layer to $cut_class with width [expr 1.0 * $lower_width / $def_units]"
+      utl::warn "PDN" 38 "Illegal via number of cuts ($num_cuts) does not meet minimum cut rule ($min_cut_rule) for $lower_layer to $cut_class with width [expr 1.0 * $lower_width / $def_units]"
       dict set via_rule illegal 1  
     } else {
       # debug "Legal number of cuts ($num_cuts) meets minimum cut rule ($min_cut_rule) for $lower_layer, $lower_width, $cut_class"
@@ -1523,13 +1439,13 @@ proc get_via_option {lower width height constraints} {
     set min_cut_rule [get_minimumcuts $upper_layer $upper_width frombelow $cut_class]
 
     if {$num_cuts < $min_cut_rule} {
-      err 35 "Illegal via number of cuts ($num_cuts) does not meet minimum cut rule ($min_cut_rule) for $upper_layer to $cut_class with width [expr 1.0 * $upper_width / $def_units]"
+      utl::warn "PDN" 39 "Illegal via number of cuts ($num_cuts) does not meet minimum cut rule ($min_cut_rule) for $upper_layer to $cut_class with width [expr 1.0 * $upper_width / $def_units]"
       dict set via_rule illegal 1  
     } else {
       # debug "Legal number of cuts ($num_cuts) meets minimum cut rule ($min_cut_rule) for $upper_layer, $upper_width $cut_class"
     }
     if {[dict exists $via_rule illegal]} {
-      err 36 "Attempt to add illegal via at : ([expr 1.0 * [lindex $via_location 0] / $def_units] [expr 1.0 * [lindex $via_location 1] / $def_units]), via will not be added"
+      utl::warn "PDN" 36 "Attempt to add illegal via at : ([expr 1.0 * [lindex $via_location 0] / $def_units] [expr 1.0 * [lindex $via_location 1] / $def_units]), via will not be added"
     }
     lappend checked_rules $via_rule
   }
@@ -1539,13 +1455,17 @@ proc get_via_option {lower width height constraints} {
 
 proc get_viarule_name {lower width height} {
   set rules [select_via_info $lower]
-  set first_key [lindex [dict keys $rules] 0]
-  #if {![dict exists $rules $first_key cut layer]} {
-  #  debug "$lower $width $height"
-  #  debug "$rules"
-  #  debug "$first_key"
-  #}
-  set cut_layer [dict get $rules $first_key cut layer]
+  if {[llength $rules] > 0} {
+    set first_key [lindex [dict keys $rules] 0]
+    #if {![dict exists $rules $first_key cut layer]} {
+    #  debug "$lower $width $height"
+    #  debug "$rules"
+    #  debug "$first_key"
+    #}
+    set cut_layer [dict get $rules $first_key cut layer]
+  } else {
+    set cut_layer $lower
+  }
 
   return ${cut_layer}_${width}x${height}
 }
@@ -1565,6 +1485,13 @@ proc select_rule {rule1 rule2} {
   return $rule1
 }
 
+proc connection_specifies_fixed_via {constraints lower} {
+  if {[dict exists $constraints use_fixed_via]} {
+    return [dict exists $constraints use_fixed_via $lower]
+  }
+  return 0
+}
+
 proc get_via {lower width height constraints} {
   # First cur will assume that all crossing points (x y) are on grid for both lower and upper layers
   # TODO: Refine the algorithm to cope with offgrid intersection points
@@ -1574,18 +1501,24 @@ proc get_via {lower width height constraints} {
   
   if {![dict exists $physical_viarules $rule_name]} {
     set selected_rule {}
-
-    dict for {name rule} [select_via_info $lower] {
-      set result [get_via_option $lower $width $height $constraints]
-      if {$selected_rule == {}} {
-        set selected_rule $result
-      } else {
-        # Choose the best between selected rule and current result, the winner becomes the new selected rule
-        set selected_rule [select_rule $selected_rule $result]
+    # debug "$constraints"
+    if {[connection_specifies_fixed_via $constraints $lower]} {
+      # debug "Using fixed_via for $rule_name"
+      set via_name [dict get $constraints use_fixed_via $lower]
+      dict set physical_viarules $rule_name [list [list name $via_name fixed $via_name origin_x 0 origin_y 0 layers [list $lower "cut" "upper"]]]
+    } else {
+      dict for {name rule} [select_via_info $lower] {
+        set result [get_via_option $name $rule $lower $width $height $constraints]
+        if {$selected_rule == {}} {
+          set selected_rule $result
+        } else {
+          # Choose the best between selected rule and current result, the winner becomes the new selected rule
+          set selected_rule [select_rule $selected_rule $result]
+        }
       }
+      dict set physical_viarules $rule_name $selected_rule
+      # debug "Via [dict size $physical_viarules]: $rule_name"
     }
-    dict set physical_viarules $rule_name $selected_rule
-    # debug "Via [dict size $physical_viarules]: $rule_name"
   }
 
   return $rule_name
@@ -1649,11 +1582,28 @@ proc instantiate_via {physical_via_name x y constraints} {
   return $via_insts
 }
 
-proc generate_vias {layer1 layer2 intersections constraints} {
+proc generate_vias {layer1 layer2 intersections connection} {
   variable logical_viarules
   variable metal_layers
   variable via_location
+  variable tech
 
+  set constraints {}
+  if {[dict exists $connection constraints]} {
+    set constraints [dict get $connection constraints]
+  }
+  if {[dict exists $connection fixed_vias]} {
+    foreach via_name [dict get $connection fixed_vias] {
+      if {[set via [$tech findVia $via_name]] != "NULL"} {
+        set lower_layer_name [[$via getBottomLayer] getName]
+        dict set constraints use_fixed_via $lower_layer_name $via_name
+      } else {
+        utl::warn "PDN" 99 "Via $via_name specified in the grid specification does not exist in this technology"
+      }
+    }
+  }
+
+  # debug "    Constraints: $constraints"
   set vias {}
   set layer1_name $layer1
   set layer2_name $layer2
@@ -1661,15 +1611,15 @@ proc generate_vias {layer1 layer2 intersections constraints} {
   
   set i1 [lsearch -exact $metal_layers $layer1_name]
   set i2 [lsearch -exact $metal_layers $layer2_name]
-  if {$i1 == -1} {critical 21 "Cant find lower metal layer $layer1"}
-  if {$i2 == -1} {critical 22 "Cant find upper metal layer $layer2"}
+  if {$i1 == -1} {utl::error "PDN" 22 "Cant find lower metal layer $layer1"}
+  if {$i2 == -1} {utl::error "PDN" 23 "Cant find upper metal layer $layer2"}
 
   # For each layer between l1 and l2, add vias at the intersection
   # debug "  # Intersections [llength $intersections]"
   set count 0
   foreach intersection $intersections {
     if {![dict exists $logical_viarules [dict get $intersection rule]]} {
-      critical 24 "Missing logical viarule [dict get $intersection rule]\nAvailable logical viarules [dict keys $logical_viarules]"
+      utl::error "PDN" 24 "Missing logical viarule [dict get $intersection rule]\nAvailable logical viarules [dict keys $logical_viarules]"
     }
     set logical_rule [dict get $logical_viarules [dict get $intersection rule]]
 
@@ -1741,7 +1691,7 @@ proc get_grid_channel_spacing {layer_name} {
     }
   }
 
-  critical 52 "Unable to get channel_spacing setting for layer $layer_name"
+  utl::error "PDN" 52 "Unable to get channel_spacing setting for layer $layer_name"
 }
 
 proc get_grid_wire_width {layer_name} {
@@ -1760,6 +1710,9 @@ proc get_grid_wire_width {layer_name} {
       set template_name [lindex [dict get $grid_data template names] 0]
       set width [dict get $grid_data straps $layer_name $template_name width]
       return $width
+    } elseif {[dict exists $grid_data core_ring $layer_name width]} {
+      set width [dict get $grid_data core_ring $layer_name width]
+      return $width
     }
   } 
 
@@ -1776,7 +1729,7 @@ proc get_grid_wire_width {layer_name} {
       return $width
     }
   }
-  critical 44 "No width information found for $layer_name"
+  utl::error "PDN" 44 "No width information found for $layer_name"
 }
 
 proc get_grid_wire_pitch {layer_name} {
@@ -1797,20 +1750,29 @@ proc get_grid_wire_pitch {layer_name} {
     set template_name [lindex [dict get $default_grid_data template names] 0]
     set pitch [dict get $default_grid_data straps $layer_name $template_name pitch]
   } else {
-    critical 45 "No pitch information found for $layer_name"
+    utl::error "PDN" 45 "No pitch information found for $layer_name"
   }
   
   return $pitch 
 }
 
 ## Proc to generate via locations, both for a normal via and stacked via
-proc generate_via_stacks {l1 l2 tag constraints} {
+proc generate_via_stacks {l1 l2 tag connection} {
   variable logical_viarules
   variable stripe_locs
   variable def_units
   variable grid_data
   
   set area [dict get $grid_data area]
+  if {[dict exists $grid_data core_ring_area combined]} {
+    set grid_area [dict get $grid_data core_ring_area combined]
+    set factor [expr max([lindex $area 2] - [lindex $area 0], [lindex $area 3] - [lindex $area 1]) * 2]
+    set grid_area [odb::shrinkSet [odb::bloatSet $grid_area $factor] $factor]
+    # debug "Old area ($area)"
+    set bbox [lindex [odb::getRectangles $grid_area] 0]
+    set area [list {*}[$bbox ll] {*}[$bbox ur]]
+    # debug "Recalculated area to be ($area)"
+  }
   
   #this variable contains locations of intersecting points of two orthogonal metal layers, between which via needs to be inserted
   #for every intersection. Here l1 and l2 are layer names, and i1 and i2 and their indices, tag represents domain (power or ground)   
@@ -1823,23 +1785,25 @@ proc generate_via_stacks {l1 l2 tag constraints} {
   
   set ignore_count 0
   if {[array names stripe_locs "$l1,$tag"] == ""} {
-    warning 2 "No shapes on layer $l1 for $tag"
+    utl::warn "PDN" 2 "No shapes on layer $l1 for $tag"
     return {}
   }
   if {[array names stripe_locs "$l2,$tag"] == ""} {
-    warning 3 "No shapes on layer $l2 for $tag"
+    utl::warn "PDN" 3 "No shapes on layer $l2 for $tag"
     return {}
   }
   set intersection [odb::andSet [odb::andSet $stripe_locs($l1,$tag) $stripe_locs($l2,$tag)] [odb::newSetFromRect {*}$area]]
+
+  # debug "Detected [llength [::odb::getPolygons $intersection]] intersections of $l1 and $l2"
 
   foreach shape [::odb::getPolygons $intersection] {
     set points [::odb::getPoints $shape]
     if {[llength $points] != 4} {
         variable def_units
-        warning 4 "Unexpected number of points in connection shape ($l1,$l2 $tag [llength $points])"
+        utl::warn "PDN" 4 "Unexpected number of points in connection shape ($l1,$l2 $tag [llength $points])"
         set str "    "
         foreach point $points {set str "$str ([expr 1.0 * [$point getX] / $def_units ] [expr 1.0 * [$point getY] / $def_units]) "}
-        warning 5 $str
+        utl::warn "PDN" 5 $str
         continue
     }
     set xMin [expr min([[lindex $points 0] getX], [[lindex $points 1] getX], [[lindex $points 2] getX], [[lindex $points 3] getX])]
@@ -1855,13 +1819,13 @@ proc generate_via_stacks {l1 l2 tag constraints} {
       if {[get_dir $layer1] == "hor"} {
         if {$height < [get_grid_wire_width $layer1]} {
           # If the intersection doesnt cover the whole width of the bottom level wire, then ignore
-          # warning 40 "No via added at ([expr 1.0 * $xMin / $def_units] [expr 1.0 * $yMin / $def_units] [expr 1.0 * $xMax / $def_units] [expr 1.0 * $yMax / $def_units]) because the full height of $layer1 ([expr 1.0 * [get_grid_wire_width $layer1] / $def_units]) is not covered by the overlap"
+          utl::warn "PDN" 40 "No via added at ([expr 1.0 * $xMin / $def_units] [expr 1.0 * $yMin / $def_units] [expr 1.0 * $xMax / $def_units] [expr 1.0 * $yMax / $def_units]) because the full height of $layer1 ([expr 1.0 * [get_grid_wire_width $layer1] / $def_units]) is not covered by the overlap"
           continue
         }
       } else {
         if {$width < [get_grid_wire_width $layer1]} {
           # If the intersection doesnt cover the whole width of the bottom level wire, then ignore
-          # warning 41 "No via added at ([expr 1.0 * $xMin / $def_units] [expr 1.0 * $yMin / $def_units] [expr 1.0 * $xMax / $def_units] [expr 1.0 * $yMax / $def_units]) because the full width of $layer1 ([expr 1.0 * [get_grid_wire_width $layer1] / $def_units]) is not covered by the overlap"
+          utl::warn "PDN" 41 "No via added at ([expr 1.0 * $xMin / $def_units] [expr 1.0 * $yMin / $def_units] [expr 1.0 * $xMax / $def_units] [expr 1.0 * $yMax / $def_units]) because the full width of $layer1 ([expr 1.0 * [get_grid_wire_width $layer1] / $def_units]) is not covered by the overlap"
           continue
         }
       }
@@ -1869,13 +1833,13 @@ proc generate_via_stacks {l1 l2 tag constraints} {
     if {[get_dir $layer2] == "hor"} {
       if {$height < [get_grid_wire_width $layer2]} {
         # If the intersection doesnt cover the whole width of the top level wire, then ignore
-        # warning 40 "No via added at ([expr 1.0 * $xMin / $def_units] [expr 1.0 * $yMin / $def_units] [expr 1.0 * $xMax / $def_units] [expr 1.0 * $yMax / $def_units]) because the full height of $layer2 ([expr 1.0 * [get_grid_wire_width $layer2] / $def_units]) is not covered by the overlap"
+        utl::warn "PDN" 42 "No via added at ([expr 1.0 * $xMin / $def_units] [expr 1.0 * $yMin / $def_units] [expr 1.0 * $xMax / $def_units] [expr 1.0 * $yMax / $def_units]) because the full height of $layer2 ([expr 1.0 * [get_grid_wire_width $layer2] / $def_units]) is not covered by the overlap"
         continue
       }
     } else {
       if {$width < [get_grid_wire_width $layer2]} {
         # If the intersection doesnt cover the whole width of the top level wire, then ignore
-        # warning 41 "No via added at ([expr 1.0 * $xMin / $def_units] [expr 1.0 * $yMin / $def_units] [expr 1.0 * $xMax / $def_units] [expr 1.0 * $yMax / $def_units]) because the full width of $layer2 ([expr 1.0 * [get_grid_wire_width $layer2] / $def_units]) is not covered by the overlap"
+        utl::warn "PDN" 43 "No via added at ([expr 1.0 * $xMin / $def_units] [expr 1.0 * $yMin / $def_units] [expr 1.0 * $xMax / $def_units] [expr 1.0 * $yMax / $def_units]) because the full width of $layer2 ([expr 1.0 * [get_grid_wire_width $layer2] / $def_units]) is not covered by the overlap"
         continue
       }
     }
@@ -1889,7 +1853,7 @@ proc generate_via_stacks {l1 l2 tag constraints} {
   
   # debug "Added [llength $intersections] intersections"
 
-  return [generate_vias $l1 $l2 $intersections $constraints]
+  return [generate_vias $l1 $l2 $intersections $connection]
 }
 
 proc add_stripe {layer type polygon_set} {
@@ -1918,11 +1882,64 @@ proc merge_stripes {} {
   }
 }
 
+proc get_core_ring_vertical_layer_name {} {
+  variable grid_data
+
+  if {![dict exists $grid_data core_ring]} {
+    return ""
+  }
+
+  foreach layer_name [dict keys [dict get $grid_data core_ring]] {
+    if {[get_dir $layer_name] == "ver"} {
+      return $layer_name
+    }
+  }
+
+  return ""
+}
+
+proc is_extend_to_core_ring {layer_name} {
+  variable grid_data
+
+  if {![dict exists $grid_data rails $layer_name extend_to_core_ring]} {
+    return 0
+  }
+  if {![dict get $grid_data rails $layer_name extend_to_core_ring]} {
+    return 0
+  }
+  if {[get_core_ring_vertical_layer_name] == ""} {
+    return 0
+  }
+  return 1
+}
+
 # proc to generate follow pin layers or standard cell rails
 proc generate_lower_metal_followpin_rails {} {
   variable block
   variable grid_data
-  
+  variable design_data
+ 
+  set stdcell_area [get_extent [get_stdcell_area]]
+  set stdcell_min_x [lindex $stdcell_area 0]
+  set stdcell_max_x [lindex $stdcell_area 2]
+
+  if {[set ring_vertical_layer [get_core_ring_vertical_layer_name]] != ""} {
+    # debug "Ring vertical layer: $ring_vertical_layer"
+    # debug "Grid_data: $grid_data"
+    if {[dict exists $grid_data core_ring $ring_vertical_layer pad_offset]} {
+      set pad_area [find_pad_offset_area]
+      set offset [expr [dict get $grid_data core_ring $ring_vertical_layer pad_offset]]
+      set ring_adjustment [expr $stdcell_min_x - ([lindex $pad_area 0] + $offset)]
+    }
+    if {[dict exists $grid_data core_ring $ring_vertical_layer core_offset]} {
+      set ring_adjustment [expr \
+        [dict get $grid_data core_ring $ring_vertical_layer core_offset] + \
+        [dict get $grid_data core_ring $ring_vertical_layer spacing] + \
+        3 * [dict get $grid_data core_ring $ring_vertical_layer width] / 2 \
+      ]
+    }
+  }
+
   foreach row [$block getRows] {
     set orient [$row getOrient]
     set box [$row getBBox]
@@ -1936,16 +1953,60 @@ proc generate_lower_metal_followpin_rails {} {
         set vss_y [$box yMax]
       }
       default {
-        critical 25 "Unexpected row orientation $orient for row [$row getName]"
+        utl::error "PDN" 25 "Unexpected row orientation $orient for row [$row getName]"
       }
     }
+
     foreach lay [get_rails_layers] {
+      set xMin [$box xMin]
+      set xMax [$box xMax]
+      if {[is_extend_to_core_ring $lay]} {
+        # debug "Extending to core_ring - adjustment $ring_adjustment ($xMin/$xMax) ($stdcell_min_x/$stdcell_max_x)"
+        set voltage_domain [get_voltage_domain $xMin [$box yMin] $xMax [$box yMax]]
+        if {$voltage_domain == [dict get $design_data core_domain]} {
+          if {$xMin == $stdcell_min_x} {
+            set xMin [expr $xMin - $ring_adjustment]
+          }
+          if {$xMax == $stdcell_max_x} {
+            set xMax [expr $xMax + $ring_adjustment]
+          }
+        } else {
+          #Create lower metal followpin rails for voltage domains where the starting positions are not stdcell_min_x
+          set core_power [get_domain_power [dict get $design_data core_domain]]
+          set core_ground [get_domain_ground [dict get $design_data core_domain]]
+          set domain_power [get_domain_power $voltage_domain]
+          set domain_ground [get_domain_ground $voltage_domain]
+
+          set first_rect [lindex [[$block findRegion $voltage_domain] getBoundaries] 0]
+          set domain_xMin [$first_rect xMin]
+          set domain_xMax [$first_rect xMax]
+
+          if {$xMin == $domain_xMin} {
+            set xMin [expr $xMin - $ring_adjustment]
+          }
+          if {$xMax == $domain_xMax} {
+            set xMax [expr $xMax + $ring_adjustment]
+          }
+        }
+        # debug "Extended  to core_ring - adjustment $ring_adjustment ($xMin/$xMax)"
+      }
       set width [dict get $grid_data rails $lay width]
-      set vdd_box [::odb::newSetFromRect [$box xMin] [expr $vdd_y - $width / 2] [$box xMax] [expr $vdd_y + $width / 2]]
-      set vss_box [::odb::newSetFromRect [$box xMin] [expr $vss_y - $width / 2] [$box xMax] [expr $vss_y + $width / 2]]
+      # debug "VDD: $xMin [expr $vdd_y - $width / 2] $xMax [expr $vdd_y + $width / 2]"
+      set vdd_box [::odb::newSetFromRect $xMin [expr $vdd_y - $width / 2] $xMax [expr $vdd_y + $width / 2]]
+      set vdd_name [get_domain_power [get_voltage_domain $xMin [expr $vdd_y - $width / 2] $xMax [expr $vdd_y + $width / 2]]]
+      set vss_box [::odb::newSetFromRect $xMin [expr $vss_y - $width / 2] $xMax [expr $vss_y + $width / 2]]
+      set vss_name [get_domain_ground [get_voltage_domain $xMin [expr $vss_y - $width / 2] $xMax [expr $vss_y + $width / 2]]]
       # debug "[$box xMin] [expr $vdd_y - $width / 2] [$box xMax] [expr $vdd_y + $width / 2]"
-      add_stripe $lay "POWER" $vdd_box
-      add_stripe $lay "GROUND" $vss_box
+      if {$vdd_name == [get_domain_power [dict get $design_data core_domain]]} {
+        add_stripe $lay "POWER" $vdd_box
+      } else {
+        add_stripe $lay "POWER_$vdd_name" $vdd_box
+      }
+      if {$vss_name == [get_domain_ground [dict get $design_data core_domain]]} {
+        add_stripe $lay "GROUND" $vss_box
+      } else {
+        add_stripe $lay "GROUND_$vss_name" $vss_box
+      }
     }
   }
 }
@@ -1964,7 +2025,7 @@ proc generate_upper_metal_mesh_stripes {tag layer layer_info area} {
 
   if {[get_dir $layer] == "hor"} {
     set offset [expr [lindex $area 1] + [dict get $layer_info offset]]
-    if {$tag != $stripes_start_with} { ;#If not starting from bottom with this net, 
+    if {![regexp "$stripes_start_with.*" $tag match]} { ;#If not starting from bottom with this net, 
       if {[dict exists $layer_info spacing]} {
         set offset [expr {$offset + [dict get $layer_info spacing] + [dict get $layer_info width]}]
       } else {
@@ -1978,7 +2039,7 @@ proc generate_upper_metal_mesh_stripes {tag layer layer_info area} {
   } elseif {[get_dir $layer] == "ver"} {
     set offset [expr [lindex $area 0] + [dict get $layer_info offset]]
 
-    if {$tag != $stripes_start_with} { ;#If not starting from bottom with this net, 
+    if {![regexp "$stripes_start_with.*" $tag match]} { ;#If not starting from bottom with this net, 
       if {[dict exists $layer_info spacing]} {
         set offset [expr {$offset + [dict get $layer_info spacing] + [dict get $layer_info width]}]
       } else {
@@ -1990,7 +2051,7 @@ proc generate_upper_metal_mesh_stripes {tag layer layer_info area} {
       add_stripe $layer $tag $box
     }
   } else {
-    critical 26 "Invalid direction \"[get_dir $layer]\" for metal layer ${layer}. Should be either \"hor\" or \"ver\"."
+    utl::error "PDN" 26 "Invalid direction \"[get_dir $layer]\" for metal layer ${layer}. Should be either \"hor\" or \"ver\"."
   }
 }
 
@@ -2000,19 +2061,10 @@ proc adjust_area_for_core_rings {layer area} {
   # When core_rings overlap with the stdcell area, we need to block out the area
   # where the core rings have been placed.
   if {[dict exists $grid_data core_ring_area $layer]} {
-    set core_ring_area [dict get $grid_data core_ring_area combined]
-    # debug "Core ring area"
-    # foreach rect [odb::getRectangles $core_ring_area] {
-    #   debug "  [$rect ll] [$rect ur]"
-    # }
+    set core_ring_area [dict get $grid_data core_ring_area $layer]
     set grid_area [odb::newSetFromRect {*}$area]
     set grid_area [odb::subtractSet $grid_area $core_ring_area]
-    # debug "Reduced area rectangles: "
-    # foreach rect [odb::getRectangles $grid_area] {
-    #   debug "  [$rect ll] [$rect ur]"
-    # }
-    set bbox [lindex [odb::getRectangles $grid_area] 0]
-    set area [list {*}[$bbox ll] {*}[$bbox ur]]
+    set area [get_extent $grid_area]
   }
 
   # Calculate how far to extend the grid to meet with the core rings
@@ -2029,10 +2081,16 @@ proc adjust_area_for_core_rings {layer area} {
     set offset [dict get $grid_data core_ring $layer core_offset] 
     set width [dict get $grid_data core_ring $layer width]
     set spacing [dict get $grid_data core_ring $layer spacing]
+    # debug "Area: $area"
+    # debug "Offset: $offset, Width $width, Spacing $spacing"
+
+    # The area figure includes a y offset for the width of the stdcell rail - so need to subtract it here
+    set rail_width [get_rails_max_width]
+
     set xMin [expr [lindex $area 0] - $offset - $width - $spacing - $width / 2]
-    set yMin [expr [lindex $area 1] - $offset - $width - $spacing - $width / 2]
+    set yMin [expr [lindex $area 1] - $offset - $width - $spacing - $width / 2 + $rail_width / 2]
     set xMax [expr [lindex $area 2] + $offset + $width + $spacing + $width / 2]
-    set yMax [expr [lindex $area 3] + $offset + $width + $spacing + $width / 2]
+    set yMax [expr [lindex $area 3] + $offset + $width + $spacing + $width / 2 - $rail_width / 2]
   }
 
   if {[get_dir $layer] == "hor"} {
@@ -2044,10 +2102,13 @@ proc adjust_area_for_core_rings {layer area} {
 }
 
 ## this is a top-level proc to generate PDN stripes and insert vias between these stripes
-proc generate_stripes {tag} {
+proc generate_stripes {tag net_name} {
   variable plan_template
   variable template
   variable grid_data
+  variable block
+  variable design_data
+  variable voltage_domains
 
   if {![dict exists $grid_data straps]} {return}
   foreach lay [dict keys [dict get $grid_data straps]] {
@@ -2056,11 +2117,38 @@ proc generate_stripes {tag} {
     #Upper layer stripes
     if {[dict exists $grid_data straps $lay width]} {
       set area [dict get $grid_data area]
+      # debug "Area $area"
       if {[dict exists $grid_data core_ring] && [dict exists $grid_data core_ring $lay]} {
         set area [adjust_area_for_core_rings $lay $area]
       }
       # debug "area=$area (spec area=[dict get $grid_data area])"
-      generate_upper_metal_mesh_stripes $tag $lay [dict get $grid_data straps $lay] $area
+      #Create stripes for core domain's pwr/gnd nets
+      if {$net_name == [get_domain_power [dict get $design_data core_domain]] || 
+          $net_name == [get_domain_ground [dict get $design_data core_domain]]} {
+        generate_upper_metal_mesh_stripes $tag $lay [dict get $grid_data straps $lay] $area
+        #Split core domains pwr/gnd nets when they cross other voltage domains that have different pwr/gnd nets
+        update_mesh_stripes_with_volatge_domains $tag $lay $net_name
+      }
+      #Create stripes for each voltage domains
+      foreach domain_name [dict keys $voltage_domains] {
+        if {$domain_name == [dict get $design_data core_domain]} {continue} 
+        set domain [$block findRegion $domain_name]
+        set rect [lindex [$domain getBoundaries] 0]
+        set domain_name [$domain getName]
+        set domain_xMin [$rect xMin]
+        set domain_yMin [$rect yMin]
+        set domain_xMax [$rect xMax]
+        set domain_yMax [$rect yMax]
+        #Do not create duplicate stripes if the voltage domain has the same pwr/gnd nets as the core domain
+        if {($net_name == [get_domain_power $domain_name] && $net_name != [get_domain_power [dict get $design_data core_domain]]) ||
+              ($net_name == [get_domain_ground $domain_name] && $net_name != [get_domain_ground [dict get $design_data core_domain]])} {
+          set rail_width [get_rails_max_width]
+          set area [list $domain_xMin [expr $domain_yMin - $rail_width / 2] $domain_xMax [expr $domain_yMax + $rail_width / 2]]
+          set area [adjust_area_for_core_rings $lay $area]
+          set tag "$tag\_$net_name"
+          generate_upper_metal_mesh_stripes $tag $lay [dict get $grid_data straps $lay] $area
+        }
+      }
     } else {
       foreach x [lsort -integer [dict keys $plan_template]] {
         foreach y [lsort -integer [dict keys [dict get $plan_template $x]]] {
@@ -2099,6 +2187,12 @@ proc cut_blocked_areas {tag} {
 proc generate_grid_vias {tag net_name} {
   variable vias
   variable grid_data
+  variable design_data
+  
+  if {$net_name != [get_domain_power [dict get $design_data core_domain]] &&
+      $net_name != [get_domain_ground [dict get $design_data core_domain]]} {
+    set tag "$tag\_$net_name"
+  }
 
   #Via stacks
   # debug "grid_data $grid_data"
@@ -2108,12 +2202,7 @@ proc generate_grid_vias {tag net_name} {
         set l1 [lindex $connection 0]
         set l2 [lindex $connection 1]
         # debug "    $l1 to $l2"
-        set constraints {}
-        if {[dict exists $connection constraints]} {
-          set constraints [dict get $connection constraints]
-        }
-        # debug "    Constraints: $constraints"
-        set connections [generate_via_stacks $l1 $l2 $tag $constraints]
+        set connections [generate_via_stacks $l1 $l2 $tag $connection]
         lappend vias [list net_name $net_name connections $connections]
     }
   }
@@ -2128,10 +2217,7 @@ proc get_core_ring_centre {type side layer_info} {
 
   if {[dict exists $layer_info pad_offset]} {
     set area [find_pad_offset_area]
-    set xMin [lindex $area 0]
-    set yMin [lindex $area 1]
-    set xMax [lindex $area 2]
-    set yMax [lindex $area 3]
+    lassign $area xMin yMin xMax yMax
     set offset [expr [dict get $layer_info pad_offset] + $width / 2]
     # debug "area        $area"
     # debug "pad_offset  $offset"
@@ -2188,57 +2274,97 @@ proc get_core_ring_centre {type side layer_info} {
   }
 }
 
+proc real_value {value} {
+  variable def_units
+
+  return [expr $value * 1.0 / $def_units]
+}
+
 proc find_pad_offset_area {} {
   variable block
   variable grid_data
   variable design_data
 
   if {!([dict exists $grid_data pwr_pads] && [dict exists $grid_data gnd_pads])} {
-    critical 41 "Need to define pwr_pads and gnd_pads in config file to use pad_offset option"
+    utl::error "PDN" 48 "Need to define pwr_pads and gnd_pads in config file to use pad_offset option"
   }
 
-  set pad_names {}
-  dict for {pin_name pads} [dict get $grid_data pwr_pads] {
-    set pad_names [concat $pad_names $pads]
-  }
-  dict for {pin_name pads} [dict get $grid_data gnd_pads] {
-    set pad_names [concat $pad_names $pads]
-  }
-  set pad_names [lsort -unique $pad_names]
-  set die_area [dict get $design_data config die_area]
-  set xMin [lindex $die_area 0]
-  set yMin [lindex $die_area 1]
-  set xMax [lindex $die_area 2]
-  set yMax [lindex $die_area 3]
+  if {![dict exists $design_data config pad_offset_area]} {
+    set pad_names {}
+    dict for {pin_name pads} [dict get $grid_data pwr_pads] {
+      set pad_names [concat $pad_names $pads]
+    }
+    dict for {pin_name pads} [dict get $grid_data gnd_pads] {
+      set pad_names [concat $pad_names $pads]
+    }
+    set pad_names [lsort -unique $pad_names]
+    set die_area [dict get $design_data config die_area]
+    set xMin [lindex $die_area 0]
+    set yMin [lindex $die_area 1]
+    set xMax [lindex $die_area 2]
+    set yMax [lindex $die_area 3]
 
-  foreach inst [$block getInsts] {
-    if {[lsearch $pad_names [[$inst getMaster] getName]] > -1} {
-      set quadrant [get_quadrant {*}[$inst getOrigin]]
-      switch $quadrant {
-        "b" {
-          if {$yMin < [set y [[$inst getBBox] yMax]]} {
-            set yMin $y
+    # debug "pad_names: $pad_names"
+    set found_b 0
+    set found_r 0
+    set found_t 0
+    set found_l 0
+    foreach inst [$block getInsts] {
+      if {[lsearch $pad_names [[$inst getMaster] getName]] > -1} {
+        # debug "inst_master: [[$inst getMaster] getName]"
+        set quadrant [get_design_quadrant {*}[$inst getOrigin]]
+        switch $quadrant {
+          "b" {
+            # debug "inst: [$inst getName], side: $quadrant, yMax: [real_value [[$inst getBBox] yMax]]"
+            set found_b 1
+            if {$yMin < [set y [[$inst getBBox] yMax]]} {
+              set yMin $y
+            }
           }
-        }
-        "r" {
-          if {$xMax > [set x [[$inst getBBox] xMin]]} {
-            set xMax $x
+          "r" {
+            # debug "inst: [$inst getName], side: $quadrant, xMin: [real_value [[$inst getBBox] xMin]]"
+            set found_r 1
+            if {$xMax > [set x [[$inst getBBox] xMin]]} {
+              set xMax $x
+            }
           }
-        }
-        "t" {
-          if {$yMax > [set y [[$inst getBBox] yMin]]} {
-            set yMax $y
+          "t" {
+            # debug "inst: [$inst getName], side: $quadrant, yMin: [real_value [[$inst getBBox] yMin]]"
+            set found_t 1
+            if {$yMax > [set y [[$inst getBBox] yMin]]} {
+              set yMax $y
+            }
           }
-        }
-        "l" {
-          if {$xMin < [set x [[$inst getBBox] xMax]]} {
-            set xMin $x
+          "l" {
+            # debug "inst: [$inst getName], side: $quadrant, xMax: [real_value [[$inst getBBox] xMax]]"
+            set found_l 1
+            if {$xMin < [set x [[$inst getBBox] xMax]]} {
+              set xMin $x
+            }
           }
         }
       }
     }
+    if {$found_b == 0} {
+      utl::warn "PDN" 99 "No power/ground pads found on bottom edge"
+    }
+    if {$found_r == 0} {
+      utl::warn "PDN" 99 "No power/ground pads found on right edge"
+    }
+    if {$found_t == 0} {
+      utl::warn "PDN" 99 "No power/ground pads found on top edge"
+    }
+    if {$found_l == 0} {
+      utl::warn "PDN" 99 "No power/ground pads found on left edge"
+    }
+    if {$found_b == 0 || $found_r == 0 || $found_t == 0 || $found_l == 0} {
+      utl::error "PDN" 99 "Cannot place core rings without pwr/gnd pads on each side"
+    }
+    # debug "pad_area: ([real_value $xMin] [real_value $yMin]) ([real_value $xMax] [real_value $yMax])"
+    dict set design_data config pad_offset_area [list $xMin $yMin $xMax $yMax]
   }
-  return [list $xMin $yMin $xMax $yMax]
+
+  return [dict get $design_data config pad_offset_area]
 }
 
 proc generate_core_rings {core_ring_data} {
@@ -2267,7 +2393,7 @@ proc generate_core_rings {core_ring_data} {
       set inner_ux [expr $xMax - $offset - $spacing - $width]
       set inner_uy [expr $yMax - $offset - $spacing - $width]
     } elseif {[dict exists $layer_info core_offset]} {
-      set area [find_core_area]
+      set area [list {*}[[ord::get_db_core] ll] {*}[[ord::get_db_core] ur]]
       set offset [dict get $layer_info core_offset]
 
       set xMin [lindex $area 0]
@@ -2321,10 +2447,10 @@ proc generate_core_rings {core_ring_data} {
           [expr $outer_uy + $width / 2] \
         ]
 
-      add_stripe $layer POWER $upper_power
-      add_stripe $layer POWER $lower_power
-      add_stripe $layer GROUND $upper_ground
-      add_stripe $layer GROUND $lower_ground
+      add_stripe $layer "POWER" $upper_power
+      add_stripe $layer "POWER" $lower_power
+      add_stripe $layer "GROUND" $upper_ground
+      add_stripe $layer "GROUND" $lower_ground
 
       set core_rings [odb::orSets [list \
         [odb::newSetFromRect [expr $outer_lx - $width / 2] [expr $outer_ly - $width / 2] [expr $outer_ux + $width / 2] [expr $inner_ly + $width / 2]] \
@@ -2364,10 +2490,10 @@ proc generate_core_rings {core_ring_data} {
           [expr $outer_uy + $width / 2] \
         ]
 
-      add_stripe $layer POWER $lhs_power
-      add_stripe $layer POWER $rhs_power
-      add_stripe $layer GROUND $lhs_ground
-      add_stripe $layer GROUND $rhs_ground
+      add_stripe $layer "POWER" $lhs_power
+      add_stripe $layer "POWER" $rhs_power
+      add_stripe $layer "GROUND" $lhs_ground
+      add_stripe $layer "GROUND" $rhs_ground
 
       set core_rings [odb::orSets [list \
         [odb::newSetFromRect [expr $outer_lx - $width / 2] [expr $outer_ly - $width / 2] [expr $inner_lx + $width / 2] [expr $outer_uy + $width / 2]] \
@@ -2404,7 +2530,7 @@ proc get_stdcell_specification {} {
     return [dict get $design_data grid stdcell $grid_name] 
   } else {
     if {![dict exists $design_data grid stdcell]} {
-      critical 17 "No stdcell grid specification found - no rails can be inserted"
+      utl::error "PDN" 17 "No stdcell grid specification found - no rails can be inserted"
     }
   }
 
@@ -2535,6 +2661,7 @@ proc export_opendb_vias {} {
     foreach rule $rules {
       # Dont create illegal vias
       if {[dict exists $rule illegal]} {continue}
+      if {[dict exists $rule fixed]} {continue}
       
       # debug "$rule"
       set via [$block findVia [dict get $rule name]]
@@ -2565,6 +2692,109 @@ proc export_opendb_vias {} {
   # debug "end"
 }
 
+proc export_opendb_global_connection {} {
+  variable block
+  variable design_data
+  variable global_connections
+  
+  # Build index of power nets
+  set pwr_net_info [dict create]
+  foreach net_type "power_nets ground_nets" {
+    foreach net_name [dict get $design_data $net_type] {
+      dict lappend pwr_net_info nets $net_name
+      dict set pwr_net_info net $net_name inst [$block findNet $net_name]
+      dict set pwr_net_info net $net_name validmterms [get_valid_mterms $net_name]
+      if {[dict exists $global_connections $net_name]} {
+        dict set pwr_net_info net $net_name pattern [dict get $global_connections $net_name]
+      } else {
+        dict set pwr_net_info net $net_name pattern {}
+      }
+    }
+  }
+  
+  # Build index of masters with candidate pin connections
+  set masters_info [dict create]
+  foreach lib [[ord::get_db] getLibs] {
+    foreach master [$lib getMasters] {
+      foreach mterm [$master getMTerms] {
+        set mterm_type [$mterm getSigType]
+        set mterm_name [$mterm getName]
+        set mterm_dict [dict create]
+        dict set mterm_dict inst $mterm
+        dict set mterm_dict pattern {}
+        dict set mterm_dict validmterm 0
+        foreach net_name [dict get $pwr_net_info nets] {
+          # If the terminal is found in the valid_mterms list, set flag
+          foreach validm [dict get $pwr_net_info net $net_name validmterms] {
+            if {[regexp $validm $mterm_name]} {
+              dict set mterm_dict validmterm 1
+            }
+          }
+          # Prefilter patterns, so we only need to check instance names later
+          foreach pattern [dict get $pwr_net_info net $net_name pattern] {
+            if {[regexp [dict get $pattern pin_name] $mterm_name]} {
+              dict lappend mterm_dict pattern "[dict get $pattern inst_name] [dict get $pwr_net_info net $net_name inst]"
+            }
+          }
+        }
+        if {[llength [dict get $mterm_dict pattern]] > 0} {
+          dict set masters_info $master $mterm_name $mterm_dict
+        }
+      }
+    }
+  }
+  
+  foreach inst [$block getInsts] {
+    set inst_name [$inst getName]
+    set master [$inst getMaster]
+    if {[dict exists $masters_info $master]} {
+      set master_info [dict get $masters_info $master]
+      foreach mterm [dict keys $master_info] {
+        set mterm_inst [dict get $master_info $mterm inst]
+        set connect_via_pattern 0
+        # Check if instance name is part of pattern and connect
+        foreach pattern_net [dict get $master_info $mterm pattern] {
+          lassign $pattern_net pattern net
+          if {[regexp $pattern $inst_name]} {
+            odb::dbITerm_connect $inst $net $mterm_inst
+            set connect_via_pattern 1
+            break
+          }
+        }
+        if {!$connect_via_pattern && [dict get $master_info $mterm validmterm]} {
+          # no pattern matched and is a valid mterm, so we need to figure out the connectivity
+          #PHY cells like ENDCAPS, WELLTAPS have uncertain pwr/gnd connections when there are voltage domains.
+          #This is to detect where the PHY cells are placed, the pwr/gnd pins are connected automatically
+          set box [$inst getBBox]
+          set inst_llx [$box xMin]
+          set inst_lly [$box yMin]
+          set inst_urx [$box xMax]
+          set inst_ury [$box yMax]
+          set domain_name [get_voltage_domain $inst_llx $inst_lly $inst_urx $inst_ury]
+          set net_name "NULL"
+          if {[$mterm_inst getSigType] == "POWER"} {
+            set net_name [get_domain_power $domain_name]
+          } elseif {[$mterm_inst getSigType] == "GROUND"} {
+            set net_name [get_domain_ground $domain_name]
+          }
+          if {$net_name != "NULL"} {
+            odb::dbITerm_connect $inst [dict get $pwr_net_info net $net_name inst] $mterm_inst
+          }
+        }
+      }
+    }
+  }
+  
+  # Loop over power nets and set all iterms connected as special
+  foreach net_name [dict get $pwr_net_info nets] {
+    set net [$block findNet $net_name]
+    
+    foreach iterm [$net getITerms] {
+      $iterm setSpecial
+    }
+  }
+}
+
 proc export_opendb_specialnet {net_name signal_type} {
   variable block
   variable instances
@@ -2572,6 +2802,7 @@ proc export_opendb_specialnet {net_name signal_type} {
   variable tech 
   variable stripe_locs
   variable global_connections
+  variable design_data
   
   set net [$block findNet $net_name]
   if {$net == "NULL"} {
@@ -2580,48 +2811,27 @@ proc export_opendb_specialnet {net_name signal_type} {
   $net setSpecial
   $net setSigType $signal_type
   # debug "net $net_name. signaltype, $signal_type, global_connections: $global_connections"
-
-  foreach inst [$block getInsts] {
-    set master [$inst getMaster]
-    foreach mterm [$master getMTerms] {
-      if {[$mterm getSigType] == $signal_type && [dict exists $global_connections $net_name]} {
-        foreach pattern [dict get $global_connections $net_name] {
-          if {[regexp [dict get $pattern inst_name] [$inst getName]] &&
-            [regexp [dict get $pattern pin_name] [$mterm getName]]} {
-            odb::dbITerm_connect $inst $net $mterm
-          }
-        }
-      }
-    }
-    foreach iterm [$inst getITerms] {
-      if {[$iterm getNet] != "NULL" && [[$iterm getNet] getName] == $net_name} {
-        $iterm setSpecial
-      }
-    }
+  
+  if {[check_snet_is_unique $net]} {
+    $net setWildConnected
   }
-  $net setWildConnected
   set swire [odb::dbSWire_create $net "ROUTED"]
+  if {$net_name != [get_domain_power [dict get $design_data core_domain]] &&
+      $net_name != [get_domain_ground [dict get $design_data core_domain]]} {
+    set signal_type "$signal_type\_$net_name"
+  }
 
   # debug "layers - $metal_layers"
   foreach lay $metal_layers {
     if {[array names stripe_locs "$lay,$signal_type"] == ""} {continue}
 
     set layer [find_layer $lay]
-    foreach shape [::odb::getPolygons $stripe_locs($lay,$signal_type)] {
-      set points [::odb::getPoints $shape]
-      if {[llength $points] != 4} {
-        variable def_units
-        warning 6 "Unexpected number of points in shape ($lay $signal_type [llength $points])"
-        set str "    "
-        foreach point $points {set str "$str ([expr 1.0 * [$point getX] / $def_units ] [expr 1.0 * [$point getY] / $def_units]) "}
-        warning 7 $str
-        continue
-      }
-      set xMin [expr min([[lindex $points 0] getX], [[lindex $points 1] getX], [[lindex $points 2] getX], [[lindex $points 3] getX])]
-      set xMax [expr max([[lindex $points 0] getX], [[lindex $points 1] getX], [[lindex $points 2] getX], [[lindex $points 3] getX])]
-      set yMin [expr min([[lindex $points 0] getY], [[lindex $points 1] getY], [[lindex $points 2] getY], [[lindex $points 3] getY])]
-      set yMax [expr max([[lindex $points 0] getY], [[lindex $points 1] getY], [[lindex $points 2] getY], [[lindex $points 3] getY])]
-
+    foreach rect [::odb::getRectangles $stripe_locs($lay,$signal_type)] {
+      set xMin [$rect xMin]
+      set xMax [$rect xMax]
+      set yMin [$rect yMin]
+      set yMax [$rect yMax]
+      
       set width [expr $xMax - $xMin]
       set height [expr $yMax - $yMin]
 
@@ -2643,7 +2853,13 @@ proc export_opendb_specialnet {net_name signal_type} {
         set x        [dict get $via_inst x]
         set y        [dict get $via_inst y]
         # debug "$via_name $x $y [$block findVia $via_name]"
-        odb::dbSBox_create $swire [$block findVia $via_name] $x $y "STRIPE"
+        if {[set defvia [$block findVia $via_name]] != "NULL"} {
+          odb::dbSBox_create $swire $defvia $x $y "STRIPE"
+        } elseif {[set techvia [$tech findVia $via_name]] != "NULL"} {
+          odb::dbSBox_create $swire $techvia $x $y "STRIPE"
+        } else {
+          utl::error "PDN" 99 "Cannot find via $via_name"
+        }
         # debug "via created"
       }
     }
@@ -2663,6 +2879,7 @@ proc export_opendb_specialnets {} {
     export_opendb_specialnet $net_name "GROUND"
   }
   
+  export_opendb_global_connection
 }
 
 proc export_opendb_power_pin {net_name signal_type} {
@@ -2670,12 +2887,31 @@ proc export_opendb_power_pin {net_name signal_type} {
   variable block
   variable stripe_locs
   variable tech
+  variable voltage_domains
+  variable design_data
   
   set net [$block findNet $net_name]
   set bterm [odb::dbBTerm_create $net "${net_name}"]
 
   set bpin [odb::dbBPin_create $bterm]
   $bpin setPlacementStatus "FIRM"
+  
+  dict for {domain domain_info} $voltage_domains {
+    if {$domain != [dict get $design_data core_domain] && 
+        $net_name == [dict get $domain_info primary_power]} {
+      set r_pin "r_$net_name"
+      set r_net [odb::dbNet_create $block $r_pin]
+      set r_bterm [odb::dbBTerm_create $r_net "${r_pin}"]
+
+      set r_bpin [odb::dbBPin_create $r_bterm]
+      $r_bpin setPlacementStatus "FIRM"
+    }
+  }
+
+  if {$net_name != [get_domain_power [dict get $design_data core_domain]] &&
+      $net_name != [get_domain_ground [dict get $design_data core_domain]]} {
+    set signal_type "$signal_type\_$net_name"
+  }
 
   foreach lay [lreverse $metal_layers] {
     if {[array names stripe_locs "$lay,$signal_type"] == ""} {continue}
@@ -2692,6 +2928,10 @@ proc export_opendb_power_pin {net_name signal_type} {
 
       set layer [$tech findLayer $lay]
       odb::dbBox_create $bpin $layer $xMin $yMin $xMax $yMax
+      if {[info exists r_bpin]} {
+        odb::dbBox_create $r_bpin $layer $xMin $yMin $xMax $yMax
+      }
+
     }
     # debug "created $count pins on $net_name (layer:$lay)"
     # Only promote metal on top layers to be pins
@@ -2799,7 +3039,7 @@ proc transform_box {xmin ymin xmax ymax origin orientation} {
     MY    {set new_box [list [expr -1 * $xmax] $ymin [expr -1 * $xmin] $ymax]}
     MXR90 {set new_box [list $ymin $xmin $ymax $xmax]}
     MYR90 {set new_box [list [expr -1 * $ymax] [expr -1 * $xmax] [expr -1 * $ymin] [expr -1 * $xmin]]}
-    default {critical 27 "Illegal orientation $orientation specified"}
+    default {utl::error "PDN" 27 "Illegal orientation $orientation specified"}
   }
   return [list \
     [expr [lindex $new_box 0] + [lindex $origin 0]] \
@@ -2845,7 +3085,7 @@ proc get_memory_instance_pg_pins {} {
       set master [$inst getMaster]
       set mterm [$master findMTerm $term_name]
       if {$mterm == "NULL"} {
-        err 37 "Cannot find pin $term_name on instance [$inst getName] ([[$inst getMaster] getName])"
+        utl::warn "PDN" 37 "Cannot find pin $term_name on instance [$inst getName] ([[$inst getMaster] getName])"
         continue
       }
 
@@ -2895,6 +3135,24 @@ proc write_pdn_strategy {} {
   }
 }
 
+proc init_tech {} {
+  variable db
+  variable block
+  variable tech
+  variable libs
+  variable def_units
+
+  set db [ord::get_db]
+  set tech [$db getTech]
+  set libs [$db getLibs]
+  set block [[$db getChip] getBlock]
+  set def_units [$block getDefUnits]
+
+  init_metal_layers
+  init_via_tech
+ 
+}
+
 proc init {{PDN_cfg "PDN.cfg"}} {
   variable db
   variable block
@@ -2915,18 +3173,18 @@ proc init {{PDN_cfg "PDN.cfg"}} {
   variable rails_start_with
   variable physical_viarules
   variable stdcell_area
-  
-#    set ::start_time [clock clicks -milliseconds]
-  set db [ord::get_db]
 
+#    set ::start_time [clock clicks -milliseconds]
+  init_tech 
+  
+  if {![file exists $PDN_cfg]} {
+    utl::error "PDN" 28 "File $PDN_cfg does not exist"
+  }
+ 
   if {![file_exists_non_empty $PDN_cfg]} {
-    critical 28 "File $PDN_cfg does not exist, or exists but empty"
+    utl::error "PDN" 28 "File $PDN_cfg is empty"
   }
 
-  set tech [$db getTech]
-  set libs [$db getLibs]
-  set block [[$db getChip] getBlock]
-  set def_units [$block getDefUnits]
   set design_name [$block getName]
 
   set design_data {}
@@ -2937,11 +3195,8 @@ proc init {{PDN_cfg "PDN.cfg"}} {
   source $PDN_cfg
   write_pdn_strategy 
   
-  init_metal_layers
-  init_via_tech
- 
   set die_area [$block getDieArea]
-  information 8 "Design Name is $design_name"
+  utl::info "PDN" 8 "Design Name is $design_name"
   set def_output "${design_name}_pdn.def"
   
   # debug "examine vars"
@@ -2951,6 +3206,10 @@ proc init {{PDN_cfg "PDN.cfg"}} {
   
   if {[info vars ::ground_nets] == ""} {
     set ::ground_nets "VSS"
+  }
+  
+  if {[info vars ::core_domain] == ""} {
+    set  ::core_domain "CORE"
   }
 
   if {[info vars ::stripes_start_with] == ""} {
@@ -2967,6 +3226,7 @@ proc init {{PDN_cfg "PDN.cfg"}} {
   
   dict set design_data power_nets $::power_nets
   dict set design_data ground_nets $::ground_nets
+  dict set design_data core_domain $::core_domain
 
   # Sourcing user inputs file
   #
@@ -2982,7 +3242,7 @@ proc init {{PDN_cfg "PDN.cfg"}} {
   set row_height [$site getHeight]
 
   ##### Get information from BEOL LEF
-  information 9 "Reading technology data"
+  utl::info "PDN" 9 "Reading technology data"
 
   if {[info vars ::layers] != ""} {
     foreach layer $::layers {
@@ -3001,7 +3261,7 @@ proc init {{PDN_cfg "PDN.cfg"}} {
     } elseif {[llength $::halo] == 4} {
       set default_halo $::halo
     } else {
-      critical 29 "Illegal number of elements defined for ::halo \"$::halo\" (1, 2 or 4 allowed)"
+      utl::error "PDN" 29 "Illegal number of elements defined for ::halo \"$::halo\" (1, 2 or 4 allowed)"
     }
   } else {
     set default_halo "0 0 0 0"
@@ -3054,7 +3314,7 @@ proc init {{PDN_cfg "PDN.cfg"}} {
   ##### Basic sanity checks to see if inputs are given correctly
   foreach layer [get_rails_layers] {
     if {[lsearch -exact $metal_layers $layer] < 0} {
-      critical 30 "Layer specified for std. cell rails '$layer' not in list of layers."
+      utl::error "PDN" 30 "Layer specified for std. cell rails '$layer' not in list of layers."
     }
   }
   # debug "end"
@@ -3126,15 +3386,12 @@ proc specify_grid {type specification} {
   dict set design_data grid $type $spec_name $spec
 }
 
-proc get_quadrant {x y} {
-  variable design_data
-  
-  set die_area [dict get $design_data config die_area]
-  set dw [expr [lindex $die_area 2] - [lindex $die_area 0]]
-  set dh [expr [lindex $die_area 3] - [lindex $die_area 1]]
-  
-  set test_x [expr $x - [lindex $die_area 0]]
-  set test_y [expr $y - [lindex $die_area 1]]
+proc get_quadrant {rect x y} {
+  set dw [expr [lindex $rect 2] - [lindex $rect 0]]
+  set dh [expr [lindex $rect 3] - [lindex $rect 1]]
+
+  set test_x [expr $x - [lindex $rect 0]]
+  set test_y [expr $y - [lindex $rect 1]]
   # debug "$dw * $test_y ([expr $dw * $test_y]) > expr $dh * $test_x ([expr $dh * $test_x])"
   if {$dw * $test_y > $dh * $test_x} {
     # Top or left
@@ -3157,17 +3414,24 @@ proc get_quadrant {x y} {
   }
 }
 
+proc get_design_quadrant {x y} {
+  variable design_data
+  
+  set die_area [dict get $design_data config die_area]
+  return [get_quadrant $die_area $x $y]
+}
+
 proc get_core_facing_pins {instance pin_name side layer} {
   variable block
   set geoms {}
   set core_pins {}
   set inst [$block findInst [dict get $instance name]]
   if {[set iterm [$inst findITerm $pin_name]] == "NULL"} {
-    err 55 "Cannot find pin $pin_name on inst [$inst getName]"
+    utl::warn "PDN" 55 "Cannot find pin $pin_name on inst [$inst getName]"
     return {}
   }
   if {[set mterm [$iterm getMTerm]] == "NULL"} {
-    err 56 "Cannot find master pin $pin_name for cell [[$inst getMaster] getName]"
+    utl::warn "PDN" 56 "Cannot find master pin $pin_name for cell [[$inst getMaster] getName]"
     return {}
   }
   set pins [$mterm getMPins]
@@ -3228,7 +3492,7 @@ proc connect_pads_to_core_ring {type pin_name pads} {
   # debug "start - pads $pads"
   dict for {inst_name instance} [import_def_components $pads] {
     # debug "inst $inst_name"
-    set side [get_quadrant [dict get $instance x] [dict get $instance y]]
+    set side [get_design_quadrant [dict get $instance x] [dict get $instance y]]
     # debug "inst [dict get $instance name] x [dict get $instance x] y [dict get $instance y] side $side"
     switch $side {
       "t" {
@@ -3331,14 +3595,16 @@ proc print_spacing_table {layer_name} {
     set table_size [$layer getTwoWidthsSpacingTableNumWidths]
     for {set i 0} {$i < $table_size} {incr i} {
       set width [$layer getTwoWidthsSpacingTableWidth $i]
-      puts -nonewline "WIDTH $width "
+      set report_width "WIDTH $width"
       if {[$layer getTwoWidthsSpacingTableHasPRL $i]} {
         set prl [$layer getTwoWidthsSpacingTablePRL $i] 
-        puts -nonewline "PRL $prl "
+        set report_prl " PRL $prl"
+      } else {
+        set report_prl ""
       }
-      puts -nonewline "[$layer getTwoWidthsSpacingTableEntry 0 $i] "
+      set report_spacing " [$layer getTwoWidthsSpacingTableEntry 0 $i] "
     }
-    puts ""
+    utl::report "${report_width}${report_prl}${report_spacing}"
   }
 }
 
@@ -3438,7 +3704,7 @@ proc create_obstructions {layer_name polygons} {
   foreach polygon $polygons {
     set points [::odb::getPoints $polygon]
     if {[llength $points] != 4} {
-      warning 6 "Unexpected number of points in stripe of $layer_name"
+      utl::warn "PDN" 6 "Unexpected number of points in stripe of $layer_name"
       continue
     }
     set xMin [expr min([[lindex $points 0] getX], [[lindex $points 1] getX], [[lindex $points 2] getX], [[lindex $points 3] getX])]
@@ -3658,6 +3924,8 @@ proc add_grid {} {
   variable grid_data
   
   if {[dict exists $grid_data core_ring]} {
+    set area [dict get $grid_data area]
+    # debug "Area $area"
     generate_core_rings [dict get $grid_data core_ring]
     if {[dict exists $grid_data gnd_pads]} {
       dict for {pin_name cells} [dict get $grid_data gnd_pads] {
@@ -3669,6 +3937,7 @@ proc add_grid {} {
         connect_pads_to_core_ring "POWER" $pin_name $cells
       }
     }
+    generate_voltage_domain_rings [dict get $grid_data core_ring]
     # merge_stripes
     # set intersections [odb::andSet $stripe_locs(G1,POWER) $stripe_locs(G2,POWER)]
     # debug "# intersections [llength [odb::getPolygons $intersections]]"
@@ -3681,10 +3950,13 @@ proc add_grid {} {
     apply_padcell_blockages
   }
  
+    set area [dict get $grid_data area]
+    # debug "Area $area"
   # debug "Adding stdcell rails"
   # debug "area: [dict get $grid_data area]"
   if {[dict exists $grid_data rails]} {
     set area [dict get $grid_data area]
+    # debug "Area $area"
     generate_lower_metal_followpin_rails
   }
 
@@ -3692,13 +3964,13 @@ proc add_grid {} {
   # debug "Power straps"
   foreach pwr_net [dict get $design_data power_nets] {
     set tag "POWER"
-    generate_stripes $tag
+    generate_stripes $tag $pwr_net
   }
   ## Ground nets
   # debug "Ground straps"
   foreach gnd_net [dict get $design_data ground_nets] {
     set tag "GROUND"
-    generate_stripes $tag
+    generate_stripes $tag $gnd_net
   }
   merge_stripes
 
@@ -3720,7 +3992,7 @@ proc add_grid {} {
   merge_stripes
 
   if {[dict exists $grid_data obstructions]} {
-    information 32 "Generating blockages for TritonRoute"
+    utl::info "PDN" 32 "Generating blockages for TritonRoute"
     # debug "Obstructions: [dict get $grid_data obstructions]"
     foreach layer_name [dict get $grid_data obstructions] {
       generate_obstructions $layer_name
@@ -3783,7 +4055,7 @@ proc select_instance_specification {instance} {
 
   }
 
-  critical 31 "No matching grid specification found for $instance"
+  utl::error "PDN" 31 "No matching grid specification found for $instance"
 }
 
 proc get_instance_specification {instance} {
@@ -3837,7 +4109,7 @@ proc init_metal_layers {} {
 
       set tracks [$block findTrackGrid $layer]
       if {$tracks == "NULL"} {
-        warning 35 "No track information found for layer $layer_name"
+        utl::warn "PDN" 35 "No track information found for layer $layer_name"
       } else {
         dict set layers $layer_name offsetX [lindex [$tracks getGridX] 0]
         dict set layers $layer_name offsetY [lindex [$tracks getGridY] 0]
@@ -3890,72 +4162,62 @@ proc report_layer_details {layer} {
 
 proc print_strategy {type specification} {
   if {[dict exists $specification name]} {
-    puts "Type: ${type}, [dict get $specification name]"
+    utl::report "Type: ${type}, [dict get $specification name]"
   } else {
-    puts "Type: $type"
+    utl::report "Type: $type"
   }
   if {[dict exists $specification core_ring]} {
-    puts "    Core Rings"
+    utl::report "    Core Rings"
     dict for {layer_name layer} [dict get $specification core_ring] {
-      puts -nonewline "      Layer: $layer_name"
+      set str "      Layer: $layer_name"
       if {[dict exists $layer width]} {
-        set str [report_layer_details $layer]
-        puts $str
+        set str "$str [report_layer_details $layer]"
+        utl::report $str
       } else {
-        puts ""
+        utl::report $str
         foreach template [dict keys $layer] {
-          puts -nonewline [format "          %-14s" $template]
-          set str [report_layer_details [dict get $layer $template]]
-          puts $str
+          utl::report -nonewline [format "          %-14s %s" $template [report_layer_details [dict get $layer $template]]]
         }
       }
     }
   }
   if {[dict exists $specification rails]} {
-    puts "    Stdcell Rails"
+    utl::report "    Stdcell Rails"
     dict for {layer_name layer} [dict get $specification rails] {
-      puts -nonewline "      Layer: $layer_name"
       if {[dict exists $layer width]} {
-        set str [report_layer_details $layer]
-        puts $str
+        utl::report "      Layer: $layer_name [report_layer_details $layer]"
       } else {
-        puts ""
+        utl::report "      Layer: $layer_name"
         foreach template [dict keys $layer] {
-          puts -nonewline [format "          %-14s" $template]
-          set str [report_layer_details [dict get $layer $template]]
-          puts $str
+          utl::report [format "          %-14s %s" $template [report_layer_details [dict get $layer $template]]]
         }
       }
     }
   }
   if {[dict exists $specification instance]} {
-    puts "    Instance: [dict get $specification instance]"
+    utl::report "    Instance: [dict get $specification instance]"
   }
   if {[dict exists $specification macro]} {
-    puts "    Macro: [dict get $specification macro]"
+    utl::report "    Macro: [dict get $specification macro]"
   }
   if {[dict exists $specification orient]} {
-    puts "    Macro orientation: [dict get $specification orient]"
+    utl::report "    Macro orientation: [dict get $specification orient]"
   }
   if {[dict exists $specification straps]} {
-    puts "    Straps"
+    utl::report "    Straps"
     dict for {layer_name layer} [dict get $specification straps] {
-      puts -nonewline "      Layer: $layer_name"
       if {[dict exists $layer width]} {
-        set str [report_layer_details $layer]
-        puts $str
+        utl::report "      Layer: $layer_name [report_layer_details $layer]"
       } else {
-        puts ""
+        utl::report "      Layer: $layer_name"
         foreach template [dict keys $layer] {
-          puts -nonewline [format "          %-14s" $template]
-          set str [report_layer_details [dict get $layer $template]]
-          puts $str
+          utl::report [format "          %-14s %s" $template [report_layer_details [dict get $layer $template]]]
         }
       }
     }
   }
   if {[dict exists $specification connect]} {
-    puts "    Connect: [dict get $specification connect]"
+    utl::report "    Connect: [dict get $specification connect]"
   }
 }
 
@@ -4080,7 +4342,7 @@ proc round_to_routing_grid {layer_name location} {
   set prev_pos -1
   set size [expr ($size + 1) / 2]
   while {!(([lindex $grid_points $pos] < $location) && ($location < [lindex $grid_points [expr $pos + 1]]))} {
-    if {$prev_pos == $pos} {critical 51 "Infinite loop detected trying to round to grid"}
+    if {$prev_pos == $pos} {utl::error "PDN" 51 "Infinite loop detected trying to round to grid"}
     set prev_pos $pos
     set size [expr ($size + 1) / 2]
     
@@ -4089,8 +4351,8 @@ proc round_to_routing_grid {layer_name location} {
     } else {
       set pos [expr $pos - $size]
     }
-    # puts "[lindex $grid_points $pos] < $location < [lindex $grid_points [expr $pos + 1]]"
-    # expr (([lindex $grid_points $pos] < $location) && ($location < [lindex $grid_points [expr $pos + 1]]))
+    # debug "[lindex $grid_points $pos] < $location < [lindex $grid_points [expr $pos + 1]]"
+    # debug [expr (([lindex $grid_points $pos] < $location) && ($location < [lindex $grid_points [expr $pos + 1]]))]
   }
   
   return [lindex $grid_points $pos]
@@ -4134,14 +4396,16 @@ proc repair_channel {channel layer_name} {
   if {([expr $vdd_routing_grid - $width / 2] < $xMin) || ([expr $vss_routing_grid + $width / 2] > $xMax)} {
     variable def_units
 
-    err 47 "Channel ([expr 1.0 * $xMin / $def_units] [expr 1.0 * $yMin / $def_units] [expr 1.0 * $xMax / $def_units] [expr 1.0 * $yMax / $def_units]) too narrow. Channel on layer $layer_name must be at least [expr (2.0 * $width + $channel_spacing) / $def_units] wide"
+    utl::warn "PDN" 47 "Channel ([expr 1.0 * $xMin / $def_units] [expr 1.0 * $yMin / $def_units] [expr 1.0 * $xMax / $def_units] [expr 1.0 * $yMax / $def_units]) too narrow. Channel on layer $layer_name must be at least [expr (2.0 * $width + $channel_spacing) / $def_units] wide"
   }
     
   set vdd_stripe [odb::newSetFromRect [expr $vdd_routing_grid - $width / 2] $yMin [expr $vdd_routing_grid + $width / 2] $yMax]
+  set vdd_name [get_domain_power [get_voltage_domain [expr $vdd_routing_grid - $width / 2] $yMin [expr $vdd_routing_grid + $width / 2] $yMax]]
   set vss_stripe [odb::newSetFromRect [expr $vss_routing_grid - $width / 2] $yMin [expr $vss_routing_grid + $width / 2] $yMax]
+  set vss_name [get_domain_ground [get_voltage_domain [expr $vss_routing_grid - $width / 2] $yMin [expr $vss_routing_grid + $width / 2] $yMax]]
 
-  add_stripe $layer_name "POWER"  $vdd_stripe
-  add_stripe $layer_name "GROUND" $vss_stripe
+  add_stripe $layer_name "POWER_$vdd_name"  $vdd_stripe
+  add_stripe $layer_name "GROUND_$vss_name" $vss_stripe
 }
 
 proc channel_has_pg_straps {channel layer_name}  {
@@ -4149,11 +4413,11 @@ proc channel_has_pg_straps {channel layer_name}  {
 
   set power_strap 0
   set ground_strap 0
-  set check_set [odb::andSet $stripe_locs($layer_name,POWER) $channel]
+  set check_set [odb::andSet $stripe_locs($layer_name,"POWER") $channel]
   if {[llength [odb::getPolygons $check_set]] > 0} {
     set power_strap 1
   }
-  set check_set [odb::andSet $stripe_locs($layer_name,GROUND) $channel]
+  set check_set [odb::andSet $stripe_locs($layer_name,"GROUND") $channel]
   if {[llength [odb::getPolygons $check_set]] > 0} {
     set ground_strap 1
   }
@@ -4163,11 +4427,11 @@ proc channel_has_pg_straps {channel layer_name}  {
 
   # If there is a single strap in the channel, then remove it - the repair will add power and ground
   if {$power_strap && !$ground_strap} {
-    set $stripe_locs($layer_name,POWER) [odb::subtractSet $stripe_locs($layer_name,POWER) $channel]
+    set $stripe_locs($layer_name,"POWER") [odb::subtractSet $stripe_locs($layer_name,"POWER") $channel]
   }
 
   if {!$power_strap && $ground_strap} {
-    set $stripe_locs($layer_name,GROUND) [odb::subtractSet $stripe_locs($layer_name,GROUND) $channel]
+    set $stripe_locs($layer_name,"GROUND") [odb::subtractSet $stripe_locs($layer_name,"GROUND") $channel]
   }
 
   return 0
@@ -4179,7 +4443,7 @@ proc process_channels {} {
     foreach channel [::odb::getPolygons $channels] {
       set points [::odb::getPoints $channel]
       if {[llength $points] != 4} {
-        err 46 "Non-rectangular channel area"
+        utl::warn "PDN" 46 "Non-rectangular channel area"
         continue
       }
     
@@ -4204,14 +4468,13 @@ proc get_stdcell_plus_area {} {
 }
 
 proc get_stdcell_area {} {
-  variable block
   variable stdcell_area
   variable stdcell_plus_area
   
   if {$stdcell_area != ""} {return $stdcell_area}
   set rails_width [get_rails_max_width]
   
-  set rows [$block getRows]
+  set rows [[ord::get_db_block] getRows]
   set first_row [[lindex $rows 0] getBBox]
 
   set minX [$first_row xMin]
@@ -4256,6 +4519,336 @@ proc get_rails_max_width {} {
   }
   
   return $max_width
+}
+
+
+variable voltage_domains {
+  CORE {
+    primary_power VDD primary_ground VSS
+  }
+}
+
+# This is a proc to get the first voltage domain that overlaps with the input box
+proc get_voltage_domain {llx lly urx ury} {
+  variable block
+  variable design_data
+  variable voltage_domains
+
+
+  set name [dict get $design_data core_domain]
+  foreach domain_name [dict keys $voltage_domains] {
+    if {$domain_name == [dict get $design_data core_domain]} {continue}
+    set domain [$block findRegion $domain_name]
+    set rect [lindex [$domain getBoundaries] 0]
+
+    set domain_xMin [$rect xMin]
+    set domain_yMin [$rect yMin]
+    set domain_xMax [$rect xMax]
+    set domain_yMax [$rect yMax]
+
+    if {!($domain_yMin >= $ury || $domain_xMin >= $urx || $domain_xMax <= $llx || $domain_yMax <= $lly)} {
+      set name [$domain getName]
+      break
+    }
+  }
+  return $name
+}
+
+proc get_domain_power {domain} {
+  variable voltage_domains
+
+  return [dict get $voltage_domains $domain primary_power]
+}
+
+proc get_domain_ground {domain} {
+  variable voltage_domains
+
+  return [dict get $voltage_domains $domain primary_ground]
+}
+
+# This proc is to split core domain's power stripes if they cross interal voltage domains that have different pwr/gnd nets
+proc update_mesh_stripes_with_volatge_domains {tag lay snet_name} {
+  variable block
+  variable stripes
+  variable grid_data
+  variable design_data
+  variable voltage_domains
+
+  set rails_width [get_rails_max_width]
+
+  set stdcell_area [get_extent [get_stdcell_area]]
+  set stdcell_min_x [lindex $stdcell_area 0]
+  set stdcell_min_y [lindex $stdcell_area 1]
+  set stdcell_max_x [lindex $stdcell_area 2]
+  set stdcell_max_y [lindex $stdcell_area 3]
+  
+  set ring_adjustment 0
+  if {[set ring_vertical_layer [get_core_ring_vertical_layer_name]] != ""} {
+    if {[dict exists $grid_data core_ring $ring_vertical_layer pad_offset]} {
+      set pad_area [find_pad_offset_area]
+      set offset [expr [dict get $grid_data core_ring $ring_vertical_layer pad_offset]]
+      set ring_adjustment [expr $stdcell_min_x - ([lindex $pad_area 0] + $offset)]
+    }
+    if {[dict exists $grid_data core_ring $ring_vertical_layer core_offset]} {
+      set ring_adjustment [expr \
+        [dict get $grid_data core_ring $ring_vertical_layer core_offset] + \
+        [dict get $grid_data core_ring $ring_vertical_layer spacing] + \
+        3 * [dict get $grid_data core_ring $ring_vertical_layer width] / 2 \
+      ]
+    }
+  }
+  
+  set first_row [lindex [$block getRows] 0]
+  set row_site [$first_row getSite]
+  set site_width [$row_site getWidth]
+  set row_height [$row_site getHeight]
+
+  # This voltage domain to core domain margin is hard coded for now
+  set MARGIN 6
+  set X_MARGIN [expr ($MARGIN * $row_height / $site_width) * $site_width]
+  set Y_MARGIN [expr $MARGIN * $row_height]
+
+  foreach domain_name [dict keys $voltage_domains] {
+    if {$domain_name == [dict get $design_data core_domain]} {continue}
+    set domain [$block findRegion $domain_name]
+    set first_rect [lindex [$domain getBoundaries] 0]
+
+    # voltage domain area
+    set domain_xMin [expr [$first_rect xMin]]
+    set domain_yMin [expr [$first_rect yMin]]
+    set domain_xMax [expr [$first_rect xMax]]
+    set domain_yMax [expr [$first_rect yMax]]
+    
+    # voltage domain area + margin
+    set domain_boundary_xMin [expr [$first_rect xMin] - $X_MARGIN]
+    set domain_boundary_yMin [expr [$first_rect yMin] - $Y_MARGIN + $rails_width / 2]
+    set domain_boundary_xMax [expr [$first_rect xMax] + $X_MARGIN]
+    set domain_boundary_yMax [expr [$first_rect yMax] + $Y_MARGIN - $rails_width / 2]
+   
+    if {[get_dir $lay] == "hor"} {
+      if {$domain_boundary_xMin < $stdcell_min_x + $site_width} {
+        set domain_boundary_xMin [expr $stdcell_min_x - $ring_adjustment]
+      }
+      if {$domain_boundary_xMax > $stdcell_max_x - $site_width} {
+        set domain_boundary_xMax [expr $stdcell_max_x + $ring_adjustment]
+      }
+    } else {
+      if {$domain_boundary_yMin < $stdcell_min_y + $row_height} {
+        set domain_boundary_yMin [expr $stdcell_min_y - $ring_adjustment]
+      }
+      if {$domain_boundary_yMax > $stdcell_max_y - $row_height} {
+        set domain_boundary_yMax [expr $stdcell_max_y + $ring_adjustment]
+      }
+    }
+
+    # Core domain's pwr/gnd nets that are not shared should not cross the entire voltage domain area
+    set boundary_box \
+        [odb::newSetFromRect \
+          $domain_boundary_xMin \
+          $domain_boundary_yMin \
+          $domain_boundary_xMax \
+          $domain_boundary_yMax \
+        ]
+
+    if {[get_dir $lay] == "hor"} {
+      set domain_box \
+        [odb::newSetFromRect \
+          $domain_boundary_xMin \
+          $domain_yMin \
+          $domain_boundary_xMax \
+          $domain_yMax \
+        ]
+    } else {
+      set domain_box \
+        [odb::newSetFromRect \
+          $domain_xMin \
+          $domain_boundary_yMin \
+          $domain_xMax \
+          $domain_boundary_yMax \
+        ]
+    } 
+    # Core domain's pwr/gnd nets shared with a voltage domain should not cross the domains' pwr/gnd rings
+    set boundary_box_for_crossing_core_net [odb::subtractSet $boundary_box $domain_box]
+
+    for {set i 0} {$i < [llength $stripes($lay,$tag)]} {incr i} {
+      set updated_polygonSet [lindex $stripes($lay,$tag) $i]
+      if {$snet_name == [get_domain_ground $domain_name] ||
+          $snet_name == [get_domain_power $domain_name]} {
+        set updated_polygonSet [odb::subtractSet $updated_polygonSet $boundary_box_for_crossing_core_net]
+      } else {
+        set updated_polygonSet [odb::subtractSet $updated_polygonSet $boundary_box]
+      }
+      # This if statemet prevents from deleting domain rings
+      if {[llength [odb::getPolygons $updated_polygonSet]] > 0} {
+        set stripes($lay,$tag) [lreplace $stripes($lay,$tag) $i $i $updated_polygonSet]
+      }
+    }
+  }
+}
+
+# This proc is to check if a pwr/gnd net is unique for all voltage domains, the setWildConnected can be used
+proc check_snet_is_unique {net} {
+  variable voltage_domains
+  
+  set is_unique_power 1
+  foreach vd_key [dict keys $voltage_domains] {
+    if {[dict get $voltage_domains $vd_key primary_power] != [$net getName]} {
+      set is_unique_power 0
+      break
+    }
+  }
+
+  set is_unique_ground 1
+  foreach vd_key [dict keys $voltage_domains] {
+    if {[dict get $voltage_domains $vd_key primary_ground] != [$net getName]} {
+      set is_unique_ground 0
+      break
+    }
+  }
+
+  return [expr $is_unique_power || $is_unique_ground]
+  
+} 
+
+# This proc generates power rings for voltage domains, tags for the core domain are POWER/GROUND, tags for the other
+# voltage domains are defined as POWER_<pwr-net> and GROUND_<gnd-net>
+proc generate_voltage_domain_rings {core_ring_data} {
+  variable block
+  variable voltage_domains
+  variable grid_data
+  variable design_data
+
+  foreach domain_name [dict keys $voltage_domains] {
+    if {$domain_name == [dict get $design_data core_domain]} {continue}
+    set domain [$block findRegion $domain_name]
+    set rect [lindex [$domain getBoundaries] 0]
+    set power_net [get_domain_power $domain_name]
+    set ground_net [get_domain_ground $domain_name]
+
+    set domain_xMin [$rect xMin]
+    set domain_yMin [$rect yMin]
+    set domain_xMax [$rect xMax]
+    set domain_yMax [$rect yMax]
+    dict for {layer layer_info} $core_ring_data {
+      if {[dict exists $layer_info core_offset]} {
+        set offset [dict get $layer_info core_offset]
+
+        set spacing [dict get $layer_info spacing]
+        set width [dict get $layer_info width]
+      
+        set inner_lx [expr $domain_xMin - $offset]
+        set inner_ly [expr $domain_yMin - $offset]
+        set inner_ux [expr $domain_xMax + $offset]
+        set inner_uy [expr $domain_yMax + $offset]
+
+        set outer_lx [expr $domain_xMin - $offset - $spacing - $width]
+        set outer_ly [expr $domain_yMin - $offset - $spacing - $width]
+        set outer_ux [expr $domain_xMax + $offset + $spacing + $width]
+        set outer_uy [expr $domain_yMax + $offset + $spacing + $width]
+      }
+      set number_of_rings 0 
+      if {[get_dir $layer] == "hor"} {
+        set lower_inner_ring \
+          [odb::newSetFromRect \
+            [expr $inner_lx - $width / 2] \
+            [expr $inner_ly - $width / 2] \
+            [expr $inner_ux + $width / 2] \
+            [expr $inner_ly + $width / 2] \
+          ]
+        set upper_inner_ring \
+          [odb::newSetFromRect \
+            [expr $inner_lx - $width / 2] \
+            [expr $inner_uy - $width / 2] \
+            [expr $inner_ux + $width / 2] \
+            [expr $inner_uy + $width / 2] \
+          ]
+        set lower_outer_ring \
+          [odb::newSetFromRect \
+            [expr $outer_lx - $width / 2] \
+            [expr $outer_ly - $width / 2] \
+            [expr $outer_ux + $width / 2] \
+            [expr $outer_ly + $width / 2] \
+          ]
+        set upper_outer_ring \
+          [odb::newSetFromRect \
+            [expr $outer_lx - $width / 2] \
+            [expr $outer_uy - $width / 2] \
+            [expr $outer_ux + $width / 2] \
+            [expr $outer_uy + $width / 2] \
+          ]
+
+        if {$power_net == [get_domain_power [dict get $design_data core_domain]]} {
+          add_stripe $layer "POWER" $lower_inner_ring
+          add_stripe $layer "POWER" $upper_inner_ring
+        } else {
+          add_stripe $layer "POWER_$power_net" $lower_inner_ring
+          add_stripe $layer "POWER_$power_net" $upper_inner_ring
+        }
+        if {$ground_net == [get_domain_ground [dict get $design_data core_domain]]} {
+          add_stripe $layer "GROUND" $lower_outer_ring
+          add_stripe $layer "GROUND" $upper_outer_ring
+        } else {   
+          add_stripe $layer "GROUND_$ground_net" $lower_outer_ring
+          add_stripe $layer "GROUND_$ground_net" $upper_outer_ring
+        }
+      } else {
+        set lhs_inner_ring \
+          [odb::newSetFromRect \
+            [expr $inner_lx - $width / 2] \
+            [expr $inner_ly - $width / 2] \
+            [expr $inner_lx + $width / 2] \
+            [expr $inner_uy + $width / 2] \
+          ]
+        set rhs_inner_ring \
+          [odb::newSetFromRect \
+            [expr $inner_ux - $width / 2] \
+            [expr $inner_ly - $width / 2] \
+            [expr $inner_ux + $width / 2] \
+            [expr $inner_uy + $width / 2] \
+          ]
+        set lhs_outer_ring \
+          [odb::newSetFromRect \
+            [expr $outer_lx - $width / 2] \
+            [expr $outer_ly - $width / 2] \
+            [expr $outer_lx + $width / 2] \
+            [expr $outer_uy + $width / 2] \
+          ]
+        set rhs_outer_ring \
+          [odb::newSetFromRect \
+            [expr $outer_ux - $width / 2] \
+            [expr $outer_ly - $width / 2] \
+            [expr $outer_ux + $width / 2] \
+            [expr $outer_uy + $width / 2] \
+          ]
+        
+        if {$power_net == [get_domain_power [dict get $design_data core_domain]]} {
+          add_stripe $layer "POWER" $lhs_inner_ring
+          add_stripe $layer "POWER" $rhs_inner_ring
+        } else {
+          add_stripe $layer "POWER_$power_net" $lhs_inner_ring
+          add_stripe $layer "POWER_$power_net" $rhs_inner_ring
+        }
+        if {$ground_net == [get_domain_ground [dict get $design_data core_domain]]} {
+          add_stripe $layer "GROUND" $lhs_outer_ring
+          add_stripe $layer "GROUND" $rhs_outer_ring
+        } else {   
+          add_stripe $layer "GROUND_$ground_net" $lhs_outer_ring
+          add_stripe $layer "GROUND_$ground_net" $rhs_outer_ring
+        }
+      }
+    }
+  }
+}
+
+# This proc detects pins used in pdn.cfg for global connections
+proc get_valid_mterms {net_name} {
+  variable global_connections
+  
+  set mterms_list {}
+  foreach pattern [dict get $global_connections $net_name] {
+    lappend mterms_list [dict get $pattern pin_name]
+  }
+  return $mterms_list 
 }
 
 proc core_area_boundary {} {
@@ -4414,10 +5007,10 @@ proc add_macro_based_grids {} {
   
   set_blockages {}
   if {[llength [dict keys $instances]] > 0} {
-    information 10 "Inserting macro grid for [llength [dict keys $instances]] macros"
+    utl::info "PDN" 10 "Inserting macro grid for [llength [dict keys $instances]] macros"
     foreach instance [dict keys $instances] {
       if {$verbose == 1} {
-        information 34 "  - grid for instance $instance"
+        utl::info "PDN" 34 "  - grid for instance $instance"
       }
       # debug "$instance [get_instance_specification $instance]"
       set grid_data [get_instance_specification $instance]
@@ -4447,10 +5040,10 @@ proc plan_grid {} {
   ################################## Main Code #################################
 
   if {![dict exists $design_data grid macro]} {
-    warning 18 "No macro grid specifications found - no straps added"
+    utl::warn "PDN" 18 "No macro grid specifications found - no straps added"
   }
 
-  information 11 "****** INFO ******"
+  utl::info "PDN" 11 "****** INFO ******"
 
   print_strategy stdcell [get_stdcell_specification]
 
@@ -4460,13 +5053,13 @@ proc plan_grid {} {
     }
   }
 
-  information 12 "**** END INFO ****"
+  utl::info "PDN" 12 "**** END INFO ****"
 
   set specification $default_grid_data
   if {[dict exists $specification name]} {
-    information 13 "Inserting stdcell grid - [dict get $specification name]"
+    utl::info "PDN" 13 "Inserting stdcell grid - [dict get $specification name]"
   } else {
-    information 14 "Inserting stdcell grid"
+    utl::info "PDN" 14 "Inserting stdcell grid"
   }
 
   if {![dict exists $specification area]} {
@@ -4496,7 +5089,7 @@ proc plan_grid {} {
 }
 
 proc opendb_update_grid {} {
-  information 15 "Writing to database"
+  utl::info "PDN" 15 "Writing to database"
   export_opendb_vias
   export_opendb_specialnets
   # export_opendb_power_pins
@@ -4511,8 +5104,7 @@ proc apply_pdn {config is_verbose} {
   
   set ::start_time [clock clicks -milliseconds]
   if {$verbose} {
-    information 16 "Power Delivery Network Generator: Generating PDN"
-    information 16 "  config: $config"
+    utl::info "PDN" 16 "Power Delivery Network Generator: Generating PDN\n  config: $config"
   }
   
   apply $config

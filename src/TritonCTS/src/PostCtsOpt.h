@@ -33,43 +33,62 @@
 //
 ///////////////////////////////////////////////////////////////////////////////
 
+#pragma once
 
-#ifndef POSTCTSOPT_H
-#define POSTCTSOPT_H
-
-#include "CtsOptions.h"
 #include "Clock.h"
+#include "CtsOptions.h"
+#include "HTreeBuilder.h"
 
 #include <unordered_map>
 
-namespace TritonCTS {
+namespace utl {
+class Logger;
+} // namespace utl
 
-class PostCtsOpt {
-public:
-        PostCtsOpt(Clock& clock, CtsOptions& options) : 
-                   _clock(&clock), _options(&options) {
-                _bufDistRatio = _options->getBufDistRatio();           
-        }      
+namespace cts {
 
-        void run();
+using utl::Logger;
 
-protected:
-        void initSourceSinkDists();
-        void computeNetSourceSinkDists(const Clock::SubNet& subNet);
-        void fixSourceSinkDists();
-        void fixNetSourceSinkDists(Clock::SubNet& subNet);
-        void createSubClockNet(Clock::SubNet& net, ClockInst* driver, ClockInst* sink);
-        Point<DBU> computeBufferLocation(ClockInst* driver, ClockInst* sink) const;
+class PostCtsOpt
+{
+ public:
+  PostCtsOpt(TreeBuilder* builder,
+             CtsOptions* options,
+             TechChar* techChar,
+             Logger* logger)
+      : _builder((HTreeBuilder*) builder),
+        _clock(&(builder->getClock())),
+        _techChar(techChar),
+        _options(options),
+        _logger(logger)
+  {
+    _bufDistRatio = _options->getBufDistRatio();
+  }
 
-        Clock*      _clock;
-        CtsOptions* _options;
-        unsigned _numViolatingSinks  = 0;
-        unsigned _numInsertedBuffers = 0;
-        double   _avgSourceSinkDist  = 0.0;
-        double   _bufDistRatio       = 0.0;
-        std::unordered_map<std::string, DBU> _sinkDistMap;
+  void run();
+
+ protected:
+  void initSourceSinkDists();
+  void computeNetSourceSinkDists(const Clock::SubNet& subNet);
+  void fixSourceSinkDists();
+  void fixNetSourceSinkDists(Clock::SubNet& subNet);
+  void fixLongWire(Clock::SubNet& net, ClockInst* driver, ClockInst* sink);
+  void createSubClockNet(Clock::SubNet& net,
+                         ClockInst* driver,
+                         ClockInst* sink);
+  Point<DBU> computeBufferLocation(ClockInst* driver, ClockInst* sink) const;
+
+  Clock* _clock;
+  CtsOptions* _options;
+  TechChar* _techChar;
+  Logger* _logger;
+  HTreeBuilder* _builder;
+  unsigned _numViolatingSinks = 0;
+  unsigned _numInsertedBuffers = 0;
+  double _avgSourceSinkDist = 0.0;
+  double _bufDistRatio = 0.0;
+  int bufIndex = 1;
+  std::unordered_map<std::string, DBU> _sinkDistMap;
 };
 
-}
-
-#endif
+}  // namespace cts

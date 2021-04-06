@@ -30,10 +30,12 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
+#include "search.h"
+
+#include <tuple>
 #include <utility>
 
 #include "dbShape.h"
-#include "search.h"
 
 namespace gui {
 
@@ -46,55 +48,91 @@ void Search::init(odb::dbBlock* block)
   }
 
   for (odb::dbInst* inst : block->getInsts()) {
-    odb::dbPlacementStatus status = inst->getPlacementStatus();
-    if (status == odb::dbPlacementStatus::NONE
-        || status == odb::dbPlacementStatus::UNPLACED) {
-      continue;
+    if (inst->isPlaced()) {
+        addInst(inst);
     }
-    addInst(inst);
+  }
+
+  for (odb::dbBTerm* term : block->getBTerms()) {
+    for (odb::dbBPin* pin : term->getBPins()) {
+      odb::dbPlacementStatus status = pin->getPlacementStatus();
+      if (status == odb::dbPlacementStatus::NONE
+          || status == odb::dbPlacementStatus::UNPLACED) {
+        continue;
+      }
+      for (odb::dbBox* box : pin->getBoxes()) {
+        if (!box) {
+          continue;
+        }
+        Box bbox(Point(box->xMin(), box->yMin()),
+                 Point(box->xMax(), box->yMax()));
+        Polygon poly;
+        bg::convert(bbox, poly);
+        odb::dbTechLayer* layer = box->getTechLayer();
+        shapes_[layer].insert(std::make_tuple(bbox, poly, term->getNet()));
+      }
+    }
+  }
+
+  for (odb::dbFill* fill : block->getFills()) {
+    odb::Rect rect;
+    fill->getRect(rect);
+    Box box(Point(rect.xMin(), rect.yMin()), Point(rect.xMax(), rect.yMax()));
+    Polygon poly;
+    bg::convert(box, poly);
+    fills_[fill->getTechLayer()].insert(std::make_tuple(box, poly, fill));
   }
 }
 
-void Search::addVia(odb::dbShape* shape, int shapeId, int x, int y)
+void Search::addVia(odb::dbNet* net, odb::dbShape* shape, int x, int y)
 {
   if (shape->getType() == odb::dbShape::TECH_VIA) {
     odb::dbTechVia* via = shape->getTechVia();
     for (odb::dbBox* box : via->getBoxes()) {
-      point_t ll(x + box->xMin(), y + box->yMin());
-      point_t ur(x + box->xMax(), y + box->yMax());
-      box_t   bbox(ll, ur);
-      shapes_[box->getTechLayer()].insert(std::make_pair(bbox, shapeId));
+      Point ll(x + box->xMin(), y + box->yMin());
+      Point ur(x + box->xMax(), y + box->yMax());
+      Box bbox(ll, ur);
+      Polygon poly;
+      bg::convert(bbox, poly);
+      shapes_[box->getTechLayer()].insert(std::make_tuple(bbox, poly, net));
     }
   } else {
     odb::dbVia* via = shape->getVia();
     for (odb::dbBox* box : via->getBoxes()) {
-      point_t ll(x + box->xMin(), y + box->yMin());
-      point_t ur(x + box->xMax(), y + box->yMax());
-      box_t   bbox(ll, ur);
-      shapes_[box->getTechLayer()].insert(std::make_pair(bbox, shapeId));
+      Point ll(x + box->xMin(), y + box->yMin());
+      Point ur(x + box->xMax(), y + box->yMax());
+      Box bbox(ll, ur);
+      Polygon poly;
+      bg::convert(bbox, poly);
+      shapes_[box->getTechLayer()].insert(std::make_tuple(bbox, poly, net));
     }
   }
 }
 
 void Search::addSNet(odb::dbNet* net)
 {
-  odb::dbSet<odb::dbSWire> swires = net->getSWires();
-
-  for (auto itr = swires.begin(); itr != swires.end(); ++itr) {
-    odb::dbSWire*                     swire = *itr;
-    odb::dbSet<odb::dbSBox>           wires = swire->getWires();
-    odb::dbSet<odb::dbSBox>::iterator box_itr;
-
-    for (box_itr = wires.begin(); box_itr != wires.end(); ++box_itr) {
-      odb::dbSBox* box     = *box_itr;
-      uint         shapeId = box->getId();
+  std::vector<odb::dbShape> shapes;
+  for (odb::dbSWire* swire : net->getSWires()) {
+    for (odb::dbSBox* box : swire->getWires()) {
       if (box->isVia()) {
-        continue;
+        box->getViaBoxes(shapes);
+        for (auto& shape : shapes) {
+          Box bbox(Point(shape.xMin(), shape.yMin()),
+                   Point(shape.xMax(), shape.yMax()));
+          Polygon poly;
+          bg::convert(bbox, poly);
+          shapes_[shape.getTechLayer()].insert(
+              std::make_tuple(bbox, poly, net));
+        }
+      } else {
+        Box bbox(Point(box->xMin(), box->yMin()),
+                 Point(box->xMax(), box->yMax()));
+        Polygon poly;
+        auto points = box->getGeomShape()->getPoints();
+        for (auto point : points)
+          bg::append(poly.outer(), Point(point.getX(), point.getY()));
+        shapes_[box->getTechLayer()].insert(std::make_tuple(bbox, poly, net));
       }
-
-      box_t bbox(point_t(box->xMin(), box->yMin()),
-                 point_t(box->xMax(), box->yMax()));
-      shapes_[box->getTechLayer()].insert(std::make_pair(bbox, shapeId));
     }
   }
 }
@@ -107,15 +145,16 @@ void Search::addNet(odb::dbNet* net)
     return;
 
   odb::dbWireShapeItr itr;
-  odb::dbShape        s;
+  odb::dbShape s;
 
   for (itr.begin(wire); itr.next(s);) {
-    int shapeId = itr.getShapeId();
     if (s.isVia()) {
-      addVia(&s, shapeId, itr._prev_x, itr._prev_y);
+      addVia(net, &s, itr._prev_x, itr._prev_y);
     } else {
-      box_t box(point_t(s.xMin(), s.yMin()), point_t(s.xMax(), s.yMax()));
-      shapes_[s.getTechLayer()].insert(std::make_pair(box, shapeId));
+      Box box(Point(s.xMin(), s.yMin()), Point(s.xMax(), s.yMax()));
+      Polygon poly;
+      bg::convert(box, poly);
+      shapes_[s.getTechLayer()].insert(std::make_tuple(box, poly, net));
     }
   }
 }
@@ -123,10 +162,18 @@ void Search::addNet(odb::dbNet* net)
 void Search::addInst(odb::dbInst* inst)
 {
   odb::dbBox* bbox = inst->getBBox();
-  point_t     ll(bbox->xMin(), bbox->yMin());
-  point_t     ur(bbox->xMax(), bbox->yMax());
-  box_t       box(ll, ur);
-  insts_.insert(std::make_pair(box, inst));
+  Point ll(bbox->xMin(), bbox->yMin());
+  Point ur(bbox->xMax(), bbox->yMax());
+  Box box(ll, ur);
+  Polygon poly;
+  bg::convert(box, poly);
+  insts_.insert(std::make_tuple(box, poly, inst));
+}
+
+void Search::clear()
+{
+  insts_.clear();
+  shapes_.clear();
 }
 
 template <typename T>
@@ -134,13 +181,13 @@ class Search::MinSizePredicate
 {
  public:
   MinSizePredicate(int min_size) : min_size_(min_size) {}
-  bool operator()(const std::pair<box_t, T>& o) const
+  bool operator()(const std::tuple<Box, Polygon, T>& o) const
   {
-    const box_t&   box = o.first;
-    const point_t& ll  = box.min_corner();
-    const point_t& ur  = box.max_corner();
-    int            w   = ur.x() - ll.x();
-    int            h   = ur.y() - ll.y();
+    Box box = std::get<0>(o);
+    const Point& ll = box.min_corner();
+    const Point& ur = box.max_corner();
+    int w = ur.x() - ll.x();
+    int h = ur.y() - ll.y();
     return std::max(w, h) >= min_size_;
   }
 
@@ -153,12 +200,12 @@ class Search::MinHeightPredicate
 {
  public:
   MinHeightPredicate(int min_height) : min_height_(min_height) {}
-  bool operator()(const std::pair<box_t, T>& o) const
+  bool operator()(const std::tuple<Box, Polygon, T>& o) const
   {
-    const box_t&   box = o.first;
-    const point_t& ll  = box.min_corner();
-    const point_t& ur  = box.max_corner();
-    int            h   = ur.y() - ll.y();
+    Box box = std::get<0>(o);
+    const Point& ll = box.min_corner();
+    const Point& ur = box.max_corner();
+    int h = ur.y() - ll.y();
     return h >= min_height_;
   }
 
@@ -166,12 +213,12 @@ class Search::MinHeightPredicate
   int min_height_;
 };
 
-Search::ShapeRange Search::search_shapes(odb::dbTechLayer* layer,
-                                         int               xLo,
-                                         int               yLo,
-                                         int               xHi,
-                                         int               yHi,
-                                         int               minSize)
+Search::ShapeRange Search::searchShapes(odb::dbTechLayer* layer,
+                                        int x_lo,
+                                        int y_lo,
+                                        int x_hi,
+                                        int y_hi,
+                                        int min_size)
 {
   auto it = shapes_.find(layer);
   if (it == shapes_.end()) {
@@ -179,29 +226,56 @@ Search::ShapeRange Search::search_shapes(odb::dbTechLayer* layer,
   }
 
   auto& rtree = it->second;
-  box_t query(point_t(xLo, yLo), point_t(xHi, yHi));
-  if (minSize > 0) {
+
+  Box query(Point(x_lo, y_lo), Point(x_hi, y_hi));
+  if (min_size > 0) {
     return ShapeRange(
-        rtree.qbegin(bgi::intersects(query)
-                     && bgi::satisfies(MinSizePredicate<int>(minSize))),
+        rtree.qbegin(
+            bgi::intersects(query)
+            && bgi::satisfies(MinSizePredicate<odb::dbNet*>(min_size))),
         rtree.qend());
   }
 
   return ShapeRange(rtree.qbegin(bgi::intersects(query)), rtree.qend());
 }
 
-Search::InstRange Search::search_insts(int xLo,
-                                       int yLo,
-                                       int xHi,
-                                       int yHi,
-                                       int minHeight)
+Search::FillRange Search::searchFills(odb::dbTechLayer* layer,
+                                      int x_lo,
+                                      int y_lo,
+                                      int x_hi,
+                                      int y_hi,
+                                      int min_size)
 {
-  box_t query(point_t(xLo, yLo), point_t(xHi, yHi));
-  if (minHeight > 0) {
+  auto it = fills_.find(layer);
+  if (it == fills_.end()) {
+    return FillRange();
+  }
+
+  auto& rtree = it->second;
+  Box query(Point(x_lo, y_lo), Point(x_hi, y_hi));
+  if (min_size > 0) {
+    return FillRange(
+        rtree.qbegin(
+            bgi::intersects(query)
+            && bgi::satisfies(MinSizePredicate<odb::dbFill*>(min_size))),
+        rtree.qend());
+  }
+
+  return FillRange(rtree.qbegin(bgi::intersects(query)), rtree.qend());
+}
+
+Search::InstRange Search::searchInsts(int x_lo,
+                                      int y_lo,
+                                      int x_hi,
+                                      int y_hi,
+                                      int min_height)
+{
+  Box query(Point(x_lo, y_lo), Point(x_hi, y_hi));
+  if (min_height > 0) {
     return InstRange(
         insts_.qbegin(
             bgi::intersects(query)
-            && bgi::satisfies(MinHeightPredicate<odb::dbInst*>(minHeight))),
+            && bgi::satisfies(MinHeightPredicate<odb::dbInst*>(min_height))),
         insts_.qend());
   }
 

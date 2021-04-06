@@ -41,13 +41,16 @@ namespace odb {
   class dbDatabase;
 }
 
-namespace FastRoute {
-  class FastRouteKernel;
+namespace grt {
+  class GlobalRouter;
 }
 
-namespace replace {
+namespace utl {
+  class Logger;
+}
 
-class Logger;
+namespace gpl {
+
 class NesterovBase;
 class GNet;
 class Die;
@@ -70,7 +73,7 @@ class Tile {
     int uy() const;
 
     // only area is needed
-    const int64_t area() const;
+    int64_t area() const;
 
     int blockage(int layer) const;
     int capacity(int layer) const;
@@ -103,7 +106,7 @@ class Tile {
     // setter funcs
     void setBlockage(int layer, int blockage);
     void setCapacity(int layer, int capacity);
-    void setCapacity(std::vector<int>& capacity);
+    void setCapacity(const std::vector<int>& capacity);
     void setRoute(int layer, int route);
 
     void setUsageHL(int layer, int usage);
@@ -221,7 +224,7 @@ Tile::uy() const {
   return uy_;
 }
 
-inline const int64_t
+inline int64_t
 Tile::area() const {
   return
     static_cast<int64_t>(ux_ - lx_) *
@@ -234,7 +237,7 @@ class TileGrid {
     TileGrid();
     ~TileGrid();
 
-    void setLogger(std::shared_ptr<Logger> log);
+    void setLogger(utl::Logger* log);
     void setTileCnt(int tileCntX, int tileCntY);
     void setTileCntX(int tileCntX);
     void setTileCntY(int tileCntY);
@@ -264,7 +267,7 @@ class TileGrid {
 
   private:
     // for traversing layer info!
-    std::shared_ptr<Logger> log_;
+    utl::Logger* log_;
 
     std::vector<Tile> tileStor_;
     std::vector<Tile*> tiles_;
@@ -340,9 +343,9 @@ class RouteBase {
     RouteBase();
     RouteBase(RouteBaseVars rbVars,
         odb::dbDatabase* db,
-        FastRoute::FastRouteKernel* fr,
+        grt::GlobalRouter* grouter,
         std::shared_ptr<NesterovBase> nb,
-        std::shared_ptr<Logger> log);
+        utl::Logger* log);
     ~RouteBase();
 
     // update Route and Est info
@@ -370,10 +373,10 @@ class RouteBase {
   private:
     RouteBaseVars rbVars_;
     odb::dbDatabase* db_;
-    FastRoute::FastRouteKernel* fr_;
+    grt::GlobalRouter* grouter_;
 
     std::shared_ptr<NesterovBase> nb_;
-    std::shared_ptr<Logger> log_;
+    utl::Logger* log_;
 
     std::unique_ptr<TileGrid> tg_;
 

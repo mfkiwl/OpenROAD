@@ -224,12 +224,13 @@ proc run_test { test } {
 	  incr errors(no_ok)
 	}
       } else {
-	if { [find_log_pass_fail $log_file] } {
-	  puts " *FAIL*$error_msg"
+        set error_msg [find_log_pass_fail $log_file]
+	if { $error_msg != "pass" } {
+	  puts " *FAIL* $error_msg"
 	  append_failure $test
 	  incr errors(fail)
 	} else {
-	  puts " pass$error_msg"
+	  puts " pass"
 	}
       }
     }
@@ -247,11 +248,13 @@ proc find_log_pass_fail { log_file } {
       set last_line $line
     }
     close $stream
-    if { [string match "pass *" $last_line] } {
-      return 0
+    if { [string match "pass*" $last_line] } {
+      return "pass"
+    } else {
+      return $last_line
     }
   }
-  return 1
+  return "fail - reason not found"
 }
 
 proc append_failure { test } {
@@ -312,7 +315,7 @@ proc run_test_valgrind { test cmd_file log_file } {
   set vg_stream [open $vg_cmd_file "w"]
   puts $vg_stream "cd [file dirname $cmd_file]"
   puts $vg_stream "source [file tail $cmd_file]"
-  puts $vg_stream "sta::delete_all_memory"
+  puts $vg_stream "ord::delete_all_memory"
   close $vg_stream
   
   set cmd [concat exec valgrind $valgrind_options \

@@ -1,9 +1,9 @@
 /////////////////////////////////////////////////////////////////////////////
 //
-// BSD 3-Clause License
-//
-// Copyright (c) 2019, James Cherry, Parallax Software, Inc.
+// Copyright (c) 2019, OpenROAD
 // All rights reserved.
+//
+// BSD 3-Clause License
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
@@ -35,11 +35,21 @@
 
 #include "openroad/OpenRoad.hh"
 
+#include <iostream>
+#ifdef ENABLE_PYTHON3
+  #define PY_SSIZE_T_CLEAN
+  #include "Python.h"
+#endif
+
+#include "utl/MakeLogger.h"
+#include "utl/Logger.h"
+
 #include "opendb/db.h"
 #include "opendb/wOrder.h"
 #include "opendb/lefin.h"
 #include "opendb/defin.h"
 #include "opendb/defout.h"
+#include "opendb/cdl.h"
 
 #include "sta/VerilogWriter.hh"
 #include "sta/StaMain.hh"
@@ -53,32 +63,36 @@
 #include "openroad/InitOpenRoad.hh"
 #include "flute3/flute.h"
 
-#include "init_fp//MakeInitFloorplan.hh"
-#include "ioPlacer/src/MakeIoplacer.h"
-#include "resizer/MakeResizer.hh"
-#include "resizer/MakeResizer.hh"
-#include "opendp/MakeOpendp.h"
-#include "tritonmp/MakeTritonMp.h"
+#include "ifp//MakeInitFloorplan.hh"
+#include "ppl/MakeIoplacer.h"
+#include "rsz/MakeResizer.hh"
+#include "gui/MakeGui.h"
+#include "dpl/MakeOpendp.h"
+#include "fin/MakeFinale.h"
+#include "mpl/MakeMacroPlacer.h"
 #include "replace/MakeReplace.h"
-#include "FastRoute/src/MakeFastRoute.h"
-#include "TritonCTS/src/MakeTritoncts.h"
-#include "tapcell/MakeTapcell.h"
+#include "grt/MakeFastRoute.h"
+#include "tritoncts/MakeTritoncts.h"
+#include "tap/MakeTapcell.h"
 #include "OpenRCX/MakeOpenRCX.h"
-#include "pdnsim/MakePDNSim.hh"
+#include "triton_route/MakeTritonRoute.h"
+#include "psm/MakePDNSim.hh"
 #include "antennachecker/MakeAntennaChecker.hh"
-#ifdef BUILD_OPENPHYSYN
-  #include "OpenPhySyn/MakeOpenPhySyn.hpp"
-#endif
+#include "PartitionMgr/src/MakePartitionMgr.h"
 
 namespace sta {
-extern const char *openroad_tcl_inits[];
+extern const char *openroad_swig_tcl_inits[];
 }
 
 // Swig uses C linkage for init functions.
 extern "C" {
-extern int Openroad_Init(Tcl_Interp *interp);
+extern int Openroad_swig_Init(Tcl_Interp *interp);
 extern int Opendbtcl_Init(Tcl_Interp *interp);
 }
+
+// Main.cc set by main()
+extern const char* log_filename;
+extern const char* metrics_filename;
 
 namespace ord {
 
@@ -97,29 +111,27 @@ using sta::evalTclInit;
 using sta::dbSta;
 using sta::Resizer;
 
-OpenRoad *OpenRoad::openroad_ = nullptr;
-
 OpenRoad::OpenRoad()
   : tcl_interp_(nullptr),
+    logger_(nullptr),
     db_(nullptr),
     verilog_network_(nullptr),
     sta_(nullptr),
     resizer_(nullptr),
     ioPlacer_(nullptr),
     opendp_(nullptr),
-    tritonMp_(nullptr),
+    finale_(nullptr),
+    macro_placer_(nullptr),
     fastRoute_(nullptr),
     tritonCts_(nullptr),
     tapcell_(nullptr),
     extractor_(nullptr),
-    antennaChecker_(nullptr),
-#ifdef BUILD_OPENPHYSYN
-    psn_(nullptr),
-#endif
+    detailed_router_(nullptr),
+    antenna_checker_(nullptr),
     replace_(nullptr),
-    pdnsim_(nullptr) 
+    pdnsim_(nullptr), 
+    partitionMgr_(nullptr) 
 {
-  openroad_ = this;
   db_ = dbDatabase::create();
 }
 
@@ -127,12 +139,30 @@ OpenRoad::~OpenRoad()
 {
   deleteDbVerilogNetwork(verilog_network_);
   deleteDbSta(sta_);
+  deleteIoplacer(ioPlacer_);
   deleteResizer(resizer_);
   deleteOpendp(opendp_);
-#ifdef BUILD_OPENPHYSYN
-  deletePsn(psn_);
-#endif
+  deleteFastRoute(fastRoute_);
+  deleteTritonCts(tritonCts_);
+  deleteTapcell(tapcell_);
+  deleteMacroPlacer(macro_placer_);
+  deleteOpenRCX(extractor_);
+  deleteTritonRoute(detailed_router_);
+  deleteReplace(replace_);
+  deleteFinale(finale_);
+  deleteAntennaChecker(antenna_checker_);
   odb::dbDatabase::destroy(db_);
+  deletePartitionMgr(partitionMgr_);
+  stt::deleteLUT();
+  delete logger_;
+}
+
+void
+deleteAllMemory()
+{
+  delete OpenRoad::openRoad();
+  sta::Sta::setSta(nullptr);
+  sta::deleteAllMemory();
 }
 
 sta::dbNetwork *
@@ -144,10 +174,9 @@ OpenRoad::getDbNetwork()
 /* static */
 OpenRoad *OpenRoad::openRoad()
 {
-  if (openroad_ == nullptr) {
-    openroad_ = new OpenRoad;    
-  }
-  return openroad_;
+  // This will be destroyed at application exit
+  static OpenRoad o;
+  return &o;
 }
 
 ////////////////////////////////////////////////////////////////
@@ -164,47 +193,51 @@ OpenRoad::init(Tcl_Interp *tcl_interp)
   tcl_interp_ = tcl_interp;
 
   // Make components.
+  logger_ = makeLogger(log_filename, metrics_filename);
+  db_->setLogger(logger_);
   sta_ = makeDbSta();
   verilog_network_ = makeDbVerilogNetwork();
   ioPlacer_ = makeIoplacer();
   resizer_ = makeResizer();
   opendp_ = makeOpendp();
+  finale_ = makeFinale();
   fastRoute_ = makeFastRoute();
   tritonCts_ = makeTritonCts();
   tapcell_ = makeTapcell();
-  tritonMp_ = makeTritonMp();
+  macro_placer_ = makeMacroPlacer();
   extractor_ = makeOpenRCX();
+  detailed_router_ = makeTritonRoute();
   replace_ = makeReplace();
   pdnsim_ = makePDNSim();
-  antennaChecker_ = makeAntennaChecker();
-#ifdef BUILD_OPENPHYSYN
-  psn_ = makePsn();
-#endif
+  antenna_checker_ = makeAntennaChecker();
+  partitionMgr_ = makePartitionMgr();
 
   // Init components.
-  Openroad_Init(tcl_interp);
+  Openroad_swig_Init(tcl_interp);
   // Import TCL scripts.
-  evalTclInit(tcl_interp, sta::openroad_tcl_inits);
+  evalTclInit(tcl_interp, sta::openroad_swig_tcl_inits);
 
+  initLogger(logger_, tcl_interp);
+  initGui(this); // first so we can register our sink with the logger
   Opendbtcl_Init(tcl_interp);
   initInitFloorplan(this);
-  Flute::readLUT();
+  stt::readLUT();
   initDbSta(this);
   initResizer(this);
   initDbVerilogNetwork(this);
   initIoplacer(this);
   initReplace(this);
   initOpendp(this);
+  initFinale(this);
   initFastRoute(this);
   initTritonCts(this);
   initTapcell(this);
-  initTritonMp(this);
+  initMacroPlacer(this);
   initOpenRCX(this);
+  initTritonRoute(this);
   initPDNSim(this);
   initAntennaChecker(this);
-#ifdef BUILD_OPENPHYSYN
-    initPsn(this);
-#endif
+  initPartitionMgr(this);
 
   // Import exported commands to global namespace.
   Tcl_Eval(tcl_interp, "sta::define_sta_cmds");
@@ -219,7 +252,7 @@ OpenRoad::readLef(const char *filename,
 		  bool make_tech,
 		  bool make_library)
 {
-  odb::lefin lef_reader(db_, false);
+  odb::lefin lef_reader(db_, logger_, false);
   dbLib *lib = nullptr;
   dbTech *tech = nullptr;
   if (make_tech && make_library) {
@@ -242,9 +275,16 @@ OpenRoad::readLef(const char *filename,
 void
 OpenRoad::readDef(const char *filename,
 		  bool order_wires,
-		  bool continue_on_errors)
+		  bool continue_on_errors,
+      bool floorplan_init,
+      bool incremental)
 {
-  odb::defin def_reader(db_);
+  odb::defin::MODE mode = odb::defin::DEFAULT;
+  if(floorplan_init)
+    mode = odb::defin::FLOORPLAN;
+  else if(incremental)
+    mode = odb::defin::INCREMENTAL;
+  odb::defin def_reader(db_, logger_, mode);
   std::vector<odb::dbLib *> search_libs;
   for (odb::dbLib *lib : db_->getLibs())
     search_libs.push_back(lib);
@@ -293,11 +333,24 @@ OpenRoad::writeDef(const char *filename,
   if (chip) {
     odb::dbBlock *block = chip->getBlock();
     if (block) {
-      odb::defout def_writer;
+      odb::defout def_writer(logger_);
       def_writer.setVersion(stringToDefVersion(version));
       def_writer.writeBlock(block, filename);
     }
   }
+}
+
+void 
+OpenRoad::writeCdl(const char* filename, bool includeFillers)
+{
+  odb::dbChip *chip = db_->getChip();
+  if (chip) {
+    odb::dbBlock *block = chip->getBlock();
+    if (block) {
+      odb::cdl::writeCdl(block, filename, includeFillers);
+    }
+  }
+  
 }
 
 void
@@ -336,7 +389,7 @@ void
 OpenRoad::linkDesign(const char *design_name)
 
 {
-  dbLinkDesign(design_name, verilog_network_, db_);
+  dbLinkDesign(design_name, verilog_network_, db_, logger_);
   for (Observer* observer : observers_) {
     observer->postReadDb(db_);
   }
@@ -345,9 +398,11 @@ OpenRoad::linkDesign(const char *design_name)
 void
 OpenRoad::writeVerilog(const char *filename,
 		       bool sort,
+		       bool include_pwr_gnd,
 		       std::vector<sta::LibertyCell*> *remove_cells)
 {
-  sta::writeVerilog(filename, sort, remove_cells, sta_->network());
+  sta::writeVerilog(filename, sort, include_pwr_gnd,
+		    remove_cells, sta_->network());
 }
 
 bool
@@ -383,6 +438,12 @@ OpenRoad::Observer::~Observer()
   }
 }
 
+#ifdef ENABLE_PYTHON3
+void OpenRoad::pythonCommand(const char* py_command)
+{
+  PyRun_SimpleString(py_command);
+}
+#endif
 
 ////////////////////////////////////////////////////////////////
 

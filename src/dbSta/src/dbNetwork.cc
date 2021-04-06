@@ -1,22 +1,44 @@
-// OpenStaDB, OpenSTA on OpenDB
-// Copyright (c) 2019, Parallax Software, Inc.
-// 
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-// 
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-// 
-// You should have received a copy of the GNU General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+/////////////////////////////////////////////////////////////////////////////
+//
+// Copyright (c) 2019, OpenROAD
+// All rights reserved.
+//
+// BSD 3-Clause License
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+// * Redistributions of source code must retain the above copyright notice, this
+//   list of conditions and the following disclaimer.
+//
+// * Redistributions in binary form must reproduce the above copyright notice,
+//   this list of conditions and the following disclaimer in the documentation
+//   and/or other materials provided with the distribution.
+//
+// * Neither the name of the copyright holder nor the names of its
+//   contributors may be used to endorse or promote products derived from
+//   this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+// POSSIBILITY OF SUCH DAMAGE.
+//
+///////////////////////////////////////////////////////////////////////////////
+
+// dbSta, OpenSTA on OpenDB
 
 #include "db_sta/dbNetwork.hh"
 
-#include "sta/Report.hh"
+#include "utl/Logger.h"
+
 #include "sta/PatternMatch.hh"
 #include "sta/PortDirection.hh"
 #include "sta/Liberty.hh"
@@ -24,6 +46,8 @@
 #include "opendb/db.h"
 
 namespace sta {
+
+using utl::ORD;
 
 using odb::dbDatabase;
 using odb::dbChip;
@@ -368,7 +392,13 @@ dbNetwork::setBlock(dbBlock *block)
 {
   db_ = block->getDataBase();
   block_ = block;
-  makeTopCell();
+  readDbNetlistAfter();
+}
+
+void
+dbNetwork::setLogger(Logger *logger)
+{
+  logger_ = logger;
 }
 
 void
@@ -753,7 +783,15 @@ dbNetwork::visitConnectedPins(const Net *net,
 			      PinVisitor &visitor,
 			      ConstNetSet &visited_nets) const
 {
-  Network::visitConnectedPins(net, visitor, visited_nets);
+  dbNet *db_net = staToDb(net);
+  for (dbITerm *iterm : db_net->getITerms()) {
+    Pin *pin =  dbToSta(iterm);
+    visitor(pin);
+  }
+  for (dbBTerm *bterm : db_net->getBTerms()) {
+    Pin *pin =  dbToSta(bterm);
+    visitor(pin);
+  }
 }
 
 Net *
@@ -777,43 +815,6 @@ dbNetwork::net(const Term *term) const
   dbBTerm *bterm = staToDb(term);
   dbNet *dnet = bterm->getNet();
   return dbToSta(dnet);
-}
-
-////////////////////////////////////////////////////////////////
-
-class DbConstantPinIterator : public ConstantPinIterator
-{
-public:
-  DbConstantPinIterator(const Network *network);
-  bool hasNext();
-  void next(Pin *&pin, LogicValue &value);
-  
-private:
-};
-
-DbConstantPinIterator::
-DbConstantPinIterator(const Network *)
-{
-}
-
-bool
-DbConstantPinIterator::hasNext()
-{
-  return false;
-}
-
-void
-DbConstantPinIterator::next(Pin *&pin,
-			    LogicValue &value)
-{
-  value = LogicValue::zero;
-  pin = nullptr;
-}
-
-ConstantPinIterator *
-dbNetwork::constantPinIterator()
-{
-  return new DbConstantPinIterator(this);
 }
 
 ////////////////////////////////////////////////////////////////
@@ -844,7 +845,7 @@ dbNetwork::readDefAfter(dbBlock* block)
 {
   db_ = block->getDataBase();
   block_ = block;
-  makeTopCell();
+  readDbNetlistAfter();
 }
 
 // Make ConcreteLibrary/Cell/Port objects for the
@@ -858,7 +859,7 @@ dbNetwork::readDbAfter(odb::dbDatabase *db)
     block_ = chip->getBlock();
     for (dbLib *lib : db_->getLibs())
       makeLibrary(lib);
-    makeTopCell();
+    readDbNetlistAfter();
   }
 }
 
@@ -881,6 +882,7 @@ dbNetwork::makeCell(Library *library,
   ConcreteCell *ccell = reinterpret_cast<ConcreteCell *>(cell);
   ccell->setExtCell(reinterpret_cast<void*>(master));
 
+  // Use the default liberty for "linking" the db/LEF masters.
   LibertyCell *lib_cell = findLibertyCell(cell_name);
   if (lib_cell) {
     ccell->setLibertyCell(lib_cell);
@@ -898,15 +900,42 @@ dbNetwork::makeCell(Library *library,
 
     if (lib_cell) {
       LibertyPort *lib_port = lib_cell->findLibertyPort(port_name);
-      if (lib_port)
+      if (lib_port) {
 	cport->setLibertyPort(lib_port);
+	lib_port->setExtPort(mterm);
+      }
       else if (!dir->isPowerGround())
-	report_->warn("LEF macro %s pin %s missing from liberty cell\n",
+	logger_->warn(ORD, 1001, "LEF macro {} pin {} missing from liberty cell.",
 		      cell_name,
 		      port_name);
     }
   }
   groupBusPorts(cell);
+
+  // Fill in liberty to db/LEF master correspondence for libraries not used
+  // for corners that are not used for "linking".
+  LibertyLibraryIterator *lib_iter = libertyLibraryIterator();
+  while (lib_iter->hasNext()) {
+    LibertyLibrary *lib = lib_iter->next();
+    LibertyCell *lib_cell = lib->findLibertyCell(cell_name);
+    if (lib_cell) {
+      lib_cell->setExtCell(reinterpret_cast<void*>(master));
+
+      for (dbMTerm *mterm : master->getMTerms()) {
+        const char *port_name = mterm->getConstName();
+        LibertyPort *lib_port = lib_cell->findLibertyPort(port_name);
+        if (lib_port)
+          lib_port->setExtPort(mterm);
+      }
+    }
+  }
+}
+
+void
+dbNetwork::readDbNetlistAfter()
+{
+  makeTopCell();
+  findConstantNets();
 }
 
 void
@@ -923,6 +952,17 @@ dbNetwork::makeTopCell()
     
   }
   groupBusPorts(top_cell_);
+}
+
+void
+dbNetwork::findConstantNets()
+{
+  for (dbNet *dnet : block_->getNets()) {
+    if (dnet->getSigType() == dbSigType::GROUND)
+      addConstantNet(dbToSta(dnet), LogicValue::zero);
+    else if (dnet->getSigType() == dbSigType::POWER)
+      addConstantNet(dbToSta(dnet), LogicValue::one);
+  }
 }
 
 // Setup mapping from Cell/Port to LibertyCell/LibertyPort.
@@ -945,10 +985,13 @@ dbNetwork::readLibertyAfter(LibertyLibrary *lib)
 	      ConcretePort *cport = port_iter->next();
 	      const char *port_name = cport->name();
 	      LibertyPort *lport = lcell->findLibertyPort(port_name);
-	      if (lport)
+	      if (lport) {
 		cport->setLibertyPort(lport);
+		lport->setExtPort(cport->extPort());
+	      }
 	      else if (!cport->direction()->isPowerGround())
-		report_->warn("Liberty cell %s pin %s missing from LEF macro\n",
+		logger_->warn(ORD, 1002,
+                              "Liberty cell {} pin {} missing from LEF macro.",
 			      lcell->name(),
 			      port_name);
 	    }
@@ -1015,14 +1058,15 @@ dbNetwork::connect(Instance *inst,
     dbBTerm *bterm = block_->findBTerm(port_name);
     if (bterm)
       bterm->connect(dnet);
-    else
+    else {
       bterm = dbBTerm::create(dnet, port_name);
-    PortDirection *dir = direction(port);
-    dbSigType sig_type;
-    dbIoType io_type;
-    staToDb(dir, sig_type, io_type);
-    bterm->setSigType(sig_type);
-    bterm->setIoType(io_type);
+      PortDirection *dir = direction(port);
+      dbSigType sig_type;
+      dbIoType io_type;
+      staToDb(dir, sig_type, io_type);
+      bterm->setSigType(sig_type);
+      bterm->setIoType(io_type);
+    }
     pin = dbToSta(bterm);
   }
   else {
@@ -1031,12 +1075,20 @@ dbNetwork::connect(Instance *inst,
     dbITerm *iterm = dbITerm::connect(dinst, dnet, dterm);
     pin = dbToSta(iterm);
   }
+  return pin;
+}
+
+// Used by dbStaCbk
+// Incrementally update drivers.
+void
+dbNetwork::connectPinAfter(Pin *pin)
+{
   if (isDriver(pin)) {
-    PinSet *drvrs = net_drvr_pin_map_.findKey(net);
+    Net *net = this->net(pin);
+    PinSet *drvrs = net_drvr_pin_map_[net];
     if (drvrs)
       drvrs->insert(pin);
   }
-  return pin;
 }
 
 Pin *
@@ -1068,25 +1120,12 @@ dbNetwork::connect(Instance *inst,
     dbITerm *iterm = dbITerm::connect(dinst, dnet, dterm);
     pin = dbToSta(iterm);
   }
-
-  if (isDriver(pin)) {
-    PinSet *drvrs = net_drvr_pin_map_.findKey(net);
-    if (drvrs)
-      drvrs->insert(pin);
-  }
   return pin;
 }
 
 void
 dbNetwork::disconnectPin(Pin *pin)
 {
-  Net *net = this->net(pin);
-  if (net && isDriver(pin)) {
-    PinSet *drvrs = net_drvr_pin_map_.findKey(net);
-    if (drvrs)
-      drvrs->erase(pin);
-  }
-
   dbITerm *iterm;
   dbBTerm *bterm;
   staToDb(pin, iterm, bterm);
@@ -1097,13 +1136,25 @@ dbNetwork::disconnectPin(Pin *pin)
 }
 
 void
+dbNetwork::disconnectPinBefore(Pin *pin)
+{
+  Net *net = this->net(pin);
+  // Incrementally update drivers.
+  if (net && isDriver(pin)) {
+    PinSet *drvrs = net_drvr_pin_map_.findKey(net);
+    if (drvrs)
+      drvrs->erase(pin);
+  }
+}
+
+void
 dbNetwork::deletePin(Pin *pin)
 {
   dbITerm *iterm;
   dbBTerm *bterm;
   staToDb(pin, iterm, bterm);
   if (iterm)
-    internalError("not implemented deletePin dbITerm");
+    logger_->critical(ORD, 1003, "deletePin not implemented for dbITerm");
   else if (bterm)
     dbBTerm::destroy(bterm);
 }
@@ -1122,25 +1173,31 @@ dbNetwork::makeNet(const char *name,
 void
 dbNetwork::deleteNet(Net *net)
 {
+  deleteNetBefore(net);
+  dbNet *dnet = staToDb(net);
+  dbNet::destroy(dnet);
+}
+
+void
+dbNetwork::deleteNetBefore(Net *net)
+{
   PinSet *drvrs = net_drvr_pin_map_.findKey(net);
   delete drvrs;
   net_drvr_pin_map_.erase(net);
-
-  dbNet *dnet = staToDb(net);
-  dbNet::destroy(dnet);
 }
 
 void
 dbNetwork::mergeInto(Net *,
 		     Net *)
 {
-  internalError("unimplemented network function mergeInto\n");
+  logger_->critical(ORD, 1004, "unimplemented network function mergeInto");
 }
 
 Net *
 dbNetwork::mergedInto(Net *)
 {
-  internalError("unimplemented network function mergeInto\n");
+  logger_->critical(ORD, 1005, "unimplemented network function mergeInto");
+  return nullptr;
 }
 
 ////////////////////////////////////////////////////////////////
@@ -1175,7 +1232,7 @@ dbNetwork::staToDb(const Pin *pin,
       bterm = static_cast<dbBTerm*>(obj);
     }
     else
-      internalError("pin is not ITerm or BTerm");
+      logger_->critical(ORD, 1006, "pin is not ITerm or BTerm");
   }
   else {
     iterm = nullptr;
@@ -1210,6 +1267,12 @@ dbNetwork::staToDb(const Port *port) const
   return reinterpret_cast<dbMTerm*>(cport->extPort());
 }
 
+dbMTerm *
+dbNetwork::staToDb(const LibertyPort *port) const
+{
+  return reinterpret_cast<dbMTerm*>(port->extPort());
+}
+
 void
 dbNetwork::staToDb(PortDirection *dir,
 		   // Return values.
@@ -1237,7 +1300,7 @@ dbNetwork::staToDb(PortDirection *dir,
     io_type = dbIoType::INOUT;
   }
   else
-    internalError("unhandled port direction");
+    logger_->critical(ORD, 1007, "unhandled port direction");
 }
 
 ////////////////////////////////////////////////////////////////
@@ -1307,7 +1370,7 @@ dbNetwork::dbToSta(dbSigType sig_type,
   else if (io_type == dbIoType::FEEDTHRU)
     return PortDirection::bidirect();
   else {
-    internalError("unknown master term type");
+    logger_->critical(ORD, 1008, "unknown master term type");
     return PortDirection::bidirect();
   }
 }

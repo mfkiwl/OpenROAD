@@ -34,18 +34,30 @@
 
 #include <tcl.h>
 
+#include <QColorDialog>
+#include <QDialog>
 #include <QDockWidget>
+#include <QGridLayout>
+#include <QGroupBox>
 #include <QLineEdit>
+#include <QModelIndex>
+#include <QRadioButton>
+#include <QSettings>
 #include <QStandardItemModel>
 #include <QStringList>
 #include <QTextEdit>
 #include <QTreeView>
+#include <QVBoxLayout>
+#include <functional>
+#include <vector>
 
+#include "congestionSetupDialog.h"
 #include "options.h"
 
 namespace odb {
 class dbDatabase;
 class dbBlock;
+class dbNet;
 }  // namespace odb
 
 namespace gui {
@@ -53,6 +65,56 @@ namespace gui {
 struct Callback
 {
   std::function<void(bool)> action;
+};
+
+class PatternButton : public QRadioButton
+{
+  Q_OBJECT
+ public:
+  PatternButton(Qt::BrushStyle pattern, QWidget* parent = nullptr);
+  ~PatternButton() {}
+
+  void paintEvent(QPaintEvent* event);
+  Qt::BrushStyle pattern() const { return pattern_; }
+
+ private:
+  Qt::BrushStyle pattern_;
+};
+
+class DisplayColorDialog : public QDialog
+{
+  Q_OBJECT
+ public:
+  DisplayColorDialog(QColor color,
+                     Qt::BrushStyle pattern = Qt::SolidPattern,
+                     QWidget* parent = nullptr);
+  ~DisplayColorDialog();
+
+  QColor getSelectedColor() const { return color_; }
+  Qt::BrushStyle getSelectedPattern() const;
+
+ public slots:
+  void acceptDialog();
+  void rejectDialog();
+
+ private:
+  QColor color_;
+  Qt::BrushStyle pattern_;
+
+  QGroupBox* pattern_group_box_;
+  QGridLayout* grid_layout_;
+  QVBoxLayout* main_layout_;
+
+  std::vector<PatternButton*> pattern_buttons_;
+  QColorDialog* color_dialog_;
+
+  void buildUI();
+
+  static inline std::vector<std::vector<Qt::BrushStyle>> brush_patterns_{
+      {Qt::NoBrush, Qt::SolidPattern},
+      {Qt::HorPattern, Qt::VerPattern},
+      {Qt::CrossPattern, Qt::DiagCrossPattern},
+      {Qt::FDiagPattern, Qt::BDiagPattern}};
 };
 
 // This class shows the user the set of layers & objects that
@@ -71,12 +133,35 @@ class DisplayControls : public QDockWidget, public Options
 
   void setDb(odb::dbDatabase* db);
 
+  void readSettings(QSettings* settings);
+  void writeSettings(QSettings* settings);
+
   // From the Options API
   QColor color(const odb::dbTechLayer* layer) override;
-  bool   isVisible(const odb::dbTechLayer* layer) override;
-  bool   isSelectable(const odb::dbTechLayer* layer) override;
-  bool   arePrefTracksVisible() override;
-  bool   areNonPrefTracksVisible() override;
+  Qt::BrushStyle pattern(const odb::dbTechLayer* layer) override;
+  bool isVisible(const odb::dbTechLayer* layer) override;
+  bool isSelectable(const odb::dbTechLayer* layer) override;
+  bool isNetVisible(odb::dbNet* net) override;
+  bool areFillsVisible() override;
+  bool areRowsVisible() override;
+  bool arePrefTracksVisible() override;
+  bool areNonPrefTracksVisible() override;
+
+  void addCustomVisibilityControl(const std::string& name,
+                                  bool initially_visible = false);
+  bool checkCustomVisibilityControl(const std::string& name);
+
+  bool isGridGraphVisible();
+  bool areRouteGuidesVisible();
+  bool areRoutingObjsVisible();
+
+  bool isCongestionVisible() const override;
+  bool arePinMarkersVisible() const override;
+  bool showHorizontalCongestion() const override;
+  bool showVerticalCongestion() const override;
+  float getMinCongestionToShow() const override;
+  float getMaxCongestionToShow() const override;
+  QColor getCongestionColor(float congestion) const override;
 
  signals:
   // The display options have changed and clients need to update
@@ -89,6 +174,9 @@ class DisplayControls : public QDockWidget, public Options
 
   // This is called by the check boxes to update the state
   void itemChanged(QStandardItem* item);
+  void displayItemDblClicked(const QModelIndex& index);
+
+  void showCongestionSetup();
 
  private:
   // The columns in the tree view
@@ -103,35 +191,68 @@ class DisplayControls : public QDockWidget, public Options
   void techInit();
 
   template <typename T>
-  QStandardItem* makeItem(const QString&                   text,
-                          T*                               parent,
-                          Qt::CheckState                   checked,
+  QStandardItem* makeItem(const QString& text,
+                          T* parent,
+                          Qt::CheckState checked,
                           const std::function<void(bool)>& visibility_action,
                           const std::function<void(bool)>& select_action
                           = std::function<void(bool)>(),
-                          const QColor& color = Qt::transparent);
+                          const QColor& color = Qt::transparent,
+                          odb::dbTechLayer* tech_layer = nullptr);
 
   void toggleAllChildren(bool checked, QStandardItem* parent, Column column);
 
-  QTreeView*          view_;
+  QTreeView* view_;
   QStandardItemModel* model_;
 
   // Categories in the model
   QStandardItem* layers_;
   QStandardItem* routing_;
   QStandardItem* tracks_;
+  QStandardItem* nets_;
+  QStandardItem* misc_;
 
   // Object controls
+  QStandardItem* fills_;
+  QStandardItem* rows_;
+  QStandardItem* congestion_map_;
+  QStandardItem* pin_markers_;
   QStandardItem* tracks_pref_;
   QStandardItem* tracks_non_pref_;
+  QStandardItem* nets_signal_;
+  QStandardItem* nets_special_;
+  QStandardItem* nets_power_;
+  QStandardItem* nets_ground_;
+  QStandardItem* nets_clock_;
 
-  odb::dbDatabase*                          db_;
-  bool                                      tech_inited_;
-  bool                                      tracks_visible_pref_;
-  bool                                      tracks_visible_non_pref_;
+  QStandardItem* grid_graph_;
+  QStandardItem* route_guides_;
+  QStandardItem* routing_objs_;
+
+  std::map<std::string, QStandardItem*> custom_controls_;
+  std::map<std::string, bool> custom_visibility_;
+
+  odb::dbDatabase* db_;
+  bool tech_inited_;
+  bool fills_visible_;
+  bool tracks_visible_pref_;
+  bool tracks_visible_non_pref_;
+  bool rows_visible_;
+  bool nets_signal_visible_;
+  bool nets_special_visible_;
+  bool nets_power_visible_;
+  bool nets_ground_visible_;
+  bool nets_clock_visible_;
+
+  bool congestion_visible_;
+  bool pin_markers_visible_;
+
   std::map<const odb::dbTechLayer*, QColor> layer_color_;
-  std::map<const odb::dbTechLayer*, bool>   layer_visible_;
-  std::map<const odb::dbTechLayer*, bool>   layer_selectable_;
+  std::map<const odb::dbTechLayer*, Qt::BrushStyle> layer_pattern_;
+  std::map<const odb::dbTechLayer*, bool> layer_visible_;
+  std::map<const odb::dbTechLayer*, bool> layer_selectable_;
+
+  CongestionSetupDialog* congestion_dialog_;
 };
 
 }  // namespace gui

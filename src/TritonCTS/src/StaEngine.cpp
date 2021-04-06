@@ -33,40 +33,78 @@
 //
 ///////////////////////////////////////////////////////////////////////////////
 
-
 #include "StaEngine.h"
 
-#include "sta/Network.hh"
-#include "sta/Sdc.hh"
-#include "openroad/OpenRoad.hh"
 #include "db_sta/dbSta.hh"
+#include "openroad/OpenRoad.hh"
+#include "utl/Logger.h"
+#include "sta/Liberty.hh"
+#include "sta/Network.hh"
+#include "db_sta/dbNetwork.hh"
+#include "sta/Sdc.hh"
 
 #include <tcl.h>
+#include <cassert>
 #include <iostream>
 #include <sstream>
-#include <cassert>
 
-namespace TritonCTS {
+namespace cts {
 
-void StaEngine::init() {
-        ord::OpenRoad* openRoad = ord::OpenRoad::openRoad();
-        _openSta = openRoad->getSta();
-        _sdc = _openSta->sdc();
-        _network = _openSta->network();
+void StaEngine::init()
+{
+  _openroad = ord::OpenRoad::openRoad();
+  _openSta = _openroad->getSta();
+  _sdc = _openSta->sdc();
+  _network = _openSta->network();
 }
 
-void StaEngine::findClockRoots() {
-        std::cout << " Looking for clock sources...\n";
-
-        std::string clockNames = "";
-        for (sta::Clock *clk : _sdc->clks()) {
-                for (sta::Pin *pin : clk->leafPins()) {
-                        clockNames += std::string(_network->name(pin)) + " ";
-                }
-        }         
-
-        std::cout << "    Clock names: " << clockNames << "\n";
-        _options->setClockNets(clockNames);
+void StaEngine::findClockRoots(sta::Clock* clk,
+                    std::set<odb::dbNet*> &clockNets)
+{
+  for (sta::Pin* pin : clk->leafPins()) {
+    odb::dbITerm* instTerm;
+    odb::dbBTerm* port;
+    _openroad->getDbNetwork()->staToDb(pin, instTerm, port);
+    odb::dbNet* net = instTerm ? instTerm->getNet() : port->getNet();
+    clockNets.insert(net);
+  }
 }
 
+float StaEngine::getInputPinCap(odb::dbITerm* iterm)
+{
+  odb::dbInst* inst = iterm->getInst();
+  sta::Cell* masterCell = _openroad->getDbNetwork()->dbToSta(inst->getMaster());
+  sta::LibertyCell* libertyCell = _network->libertyCell(masterCell);
+  if (!libertyCell) {
+    return 0.0;
+  }
+
+  sta::LibertyLibrary* staLib = libertyCell->libertyLibrary();
+  sta::LibertyPort *inputPort = libertyCell->findLibertyPort(iterm->getMTerm()->getConstName());
+  if (inputPort) {
+    return inputPort->capacitance();
+  } else {
+    return 0.0;
+  }
+    
 }
+
+bool StaEngine::isSink(odb::dbITerm* iterm)
+{
+  odb::dbInst* inst = iterm->getInst();
+  sta::Cell* masterCell = _openroad->getDbNetwork()->dbToSta(inst->getMaster());
+  sta::LibertyCell* libertyCell = _network->libertyCell(masterCell);
+  if (!libertyCell) {
+    return false;
+  }
+
+  sta::LibertyLibrary* staLib = libertyCell->libertyLibrary();
+  sta::LibertyPort *inputPort = libertyCell->findLibertyPort(iterm->getMTerm()->getConstName());
+  if (inputPort) {
+    return inputPort->isRegClk();
+  } else {
+    return false;
+  }
+    
+}
+}  // namespace cts

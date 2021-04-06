@@ -33,28 +33,28 @@
 
 #include "initialPlace.h"
 #include "placerBase.h"
-#include "logger.h" 
 #include <iostream>
 
 #include <Eigen/IterativeLinearSolvers>
 
 #include "plot.h"
+#include "graphics.h"
 
-namespace replace {
+#include "utl/Logger.h"
+
+namespace gpl {
 using namespace std;
 
 using Eigen::BiCGSTAB;
 using Eigen::IdentityPreconditioner;
+using utl::GPL;
 
 typedef Eigen::Triplet< float > T;
 
 InitialPlaceVars::InitialPlaceVars() 
-  : maxIter(20), 
-  minDiffLength(1500), 
-  maxSolverIter(100),
-  maxFanout(200),
-  netWeightScale(800.0),
-  incrementalPlaceMode(false) {}
+{
+  reset();
+}
 
 void InitialPlaceVars::reset() {
   maxIter = 20;
@@ -63,6 +63,7 @@ void InitialPlaceVars::reset() {
   maxFanout = 200;
   netWeightScale = 800.0;
   incrementalPlaceMode = false;
+  debug = false;
 }
 
 InitialPlace::InitialPlace()
@@ -70,8 +71,10 @@ InitialPlace::InitialPlace()
 
 InitialPlace::InitialPlace(InitialPlaceVars ipVars, 
     std::shared_ptr<PlacerBase> pb,
-    std::shared_ptr<Logger> log)
-: ipVars_(ipVars), pb_(pb), log_(log) {}
+    utl::Logger* log)
+: ipVars_(ipVars), pb_(pb), log_(log)
+{
+}
 
 InitialPlace::~InitialPlace() {
   reset();
@@ -87,15 +90,18 @@ static PlotEnv pe;
 #endif
 
 void InitialPlace::doBicgstabPlace() {
-  log_->procBegin("InitialPlace", 3);
-
   float errorX = 0.0f, errorY = 0.0f;
 
 #ifdef ENABLE_CIMG_LIB
   pe.setPlacerBase(pb_);
   pe.Init();
 #endif
- 
+
+  std::unique_ptr<Graphics> graphics;
+  if (ipVars_.debug && Graphics::guiActive()) {
+    graphics = make_unique<Graphics>(log_, pb_, this);
+  }
+
   // normally, initial place will place all cells in the centers.
   if( !ipVars_.incrementalPlaceMode ) {
     placeInstsCenter();
@@ -118,9 +124,8 @@ void InitialPlace::doBicgstabPlace() {
     instLocVecY_ = solver.solveWithGuess(fixedInstForceVecY_, instLocVecY_);
     errorY = solver.error();
 
-    cout << "[InitialPlace]  Iter: " << i 
-      << " CG Error: " << max(errorX, errorY)
-      << " HPWL: " << pb_->hpwl() << endl; 
+    log_->report("[InitialPlace]  Iter: {} CG Error: {:0.8f} HPWL: {}",
+       i, max(errorX, errorY), pb_->hpwl());
     updateCoordi();
 
 #ifdef ENABLE_CIMG_LIB
@@ -129,12 +134,14 @@ void InitialPlace::doBicgstabPlace() {
         string("./plot/cell/ip_") + to_string(i));
 #endif
 
+    if (graphics) {
+        graphics->cellPlot(true);
+    }
+
     if( max(errorX, errorY) <= 1e-5 && i >= 5 ) {
       break;
     }
   }
-
-  log_->procEnd("InitialPlace", 3);
 }
 
 // starting point of initial place is center.

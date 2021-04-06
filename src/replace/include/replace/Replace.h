@@ -42,20 +42,29 @@ namespace odb {
 namespace sta {
   class dbSta;
 }
-namespace FastRoute{
-  class FastRouteKernel;
+
+namespace grt {
+  class GlobalRouter;
 }
 
-namespace replace {
+namespace rsz {
+  class Resizer;
+}
+
+namespace utl {
+  class Logger;
+}
+
+namespace gpl {
 
 class PlacerBase;
 class NesterovBase;
 class RouteBase;
+class TimingBase;
 
 class InitialPlace;
 class NesterovPlace;
-
-class Logger;
+class Debug;
 
 class Replace
 {
@@ -68,9 +77,13 @@ class Replace
 
     void setDb(odb::dbDatabase* odb);
     void setSta(sta::dbSta* dbSta);
-    void setFastRoute(FastRoute::FastRouteKernel* fr);
+    void setResizer(rsz::Resizer* resizer);
+    void setFastRoute(grt::GlobalRouter* fr);
+    void setLogger(utl::Logger* log);
 
     void doInitialPlace();
+
+    void initNesterovPlace();
     void doNesterovPlace();
 
     // Initial Place param settings
@@ -86,6 +99,7 @@ class Replace
     void setBinGridCntY(int binGridCntY);
 
     void setTargetDensity(float density);
+    void setUniformTargetDensityMode(bool mode);
     void setTargetOverflow(float overflow);
     void setInitDensityPenalityFactor(float penaltyFactor);
     void setInitWireLengthCoef(float coef);
@@ -118,19 +132,24 @@ class Replace
 
     void setRoutabilityRcCoefficients(float k1, float k2, float k3, float k4);
 
+    void setDebug(int pause_iterations,
+                  int update_iterations,
+                  bool draw_bins,
+                  bool initial);
+
   private:
     odb::dbDatabase* db_;
-    sta::dbSta* sta_;
-    FastRoute::FastRouteKernel* fr_;
+    rsz::Resizer* rs_;
+    grt::GlobalRouter* fr_;
+    utl::Logger* log_;
 
     std::shared_ptr<PlacerBase> pb_;
     std::shared_ptr<NesterovBase> nb_;
     std::shared_ptr<RouteBase> rb_;
+    std::shared_ptr<TimingBase> tb_;
 
     std::unique_ptr<InitialPlace> ip_;
     std::unique_ptr<NesterovPlace> np_;
-
-    std::shared_ptr<replace::Logger> log_;
 
     int initialPlaceMaxIter_;
     int initialPlaceMinDiffLength_;
@@ -148,6 +167,7 @@ class Replace
     float minPhiCoef_;
     float maxPhiCoef_;
     float referenceHpwl_;
+
     float routabilityCheckOverflow_;
     float routabilityMaxDensity_;
     float routabilityTargetRcMetric_;
@@ -164,12 +184,18 @@ class Replace
     bool timingDrivenMode_;
     bool routabilityDrivenMode_;
     bool incrementalPlaceMode_;
+    bool uniformTargetDensityMode_;
    
     // temp variable; OpenDB should have these values. 
     int padLeft_;
     int padRight_;
 
     int verbose_;
+    bool gui_debug_;
+    int gui_debug_pause_iterations_;
+    int gui_debug_update_iterations_;
+    int gui_debug_draw_bins_;
+    int gui_debug_initial_;
 };
 }
 

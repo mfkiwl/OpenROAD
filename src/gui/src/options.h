@@ -36,7 +36,8 @@
 
 namespace odb {
 class dbTechLayer;
-}
+class dbNet;
+}  // namespace odb
 
 namespace gui {
 
@@ -47,10 +48,22 @@ class Options
  public:
   virtual ~Options() {}
   virtual QColor color(const odb::dbTechLayer* layer) = 0;
+  virtual Qt::BrushStyle pattern(const odb::dbTechLayer* layer) = 0;
   virtual bool isVisible(const odb::dbTechLayer* layer) = 0;
   virtual bool isSelectable(const odb::dbTechLayer* layer) = 0;
+  virtual bool isNetVisible(odb::dbNet* net) = 0;
+  virtual bool areFillsVisible() = 0;
+  virtual bool areRowsVisible() = 0;
   virtual bool arePrefTracksVisible() = 0;
   virtual bool areNonPrefTracksVisible() = 0;
+
+  virtual bool isCongestionVisible() const = 0;
+  virtual bool arePinMarkersVisible() const = 0;
+  virtual bool showHorizontalCongestion() const = 0;
+  virtual bool showVerticalCongestion() const = 0;
+  virtual float getMinCongestionToShow() const = 0;
+  virtual float getMaxCongestionToShow() const = 0;
+  virtual QColor getCongestionColor(float congestion) const = 0;
 };
 
 }  // namespace gui

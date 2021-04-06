@@ -38,10 +38,15 @@
 #include "opendb/db.h"
 #include <memory>
 
-namespace replace {
+namespace utl {
+class Logger;
+}
+
+namespace gpl {
 
 class PlacerBase;
-class Logger;
+class Graphics;
+
 class InitialPlaceVars {
 public:
   int maxIter;
@@ -50,6 +55,7 @@ public:
   int maxFanout;
   float netWeightScale;
   bool incrementalPlaceMode;
+  bool debug;
 
   InitialPlaceVars();
   void reset();
@@ -62,7 +68,7 @@ class InitialPlace {
     InitialPlace();
     InitialPlace(InitialPlaceVars ipVars, 
         std::shared_ptr<PlacerBase> pb,
-        std::shared_ptr<Logger> log);
+        utl::Logger* logger);
     ~InitialPlace();
 
     void doBicgstabPlace();
@@ -70,7 +76,7 @@ class InitialPlace {
   private:
     InitialPlaceVars ipVars_;
     std::shared_ptr<PlacerBase> pb_;
-    std::shared_ptr<Logger> log_;
+    utl::Logger* log_;
 
     // Solve two SparseMatrix equations here;
     //

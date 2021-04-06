@@ -41,11 +41,15 @@
 
 #define REPLACE_FFT_PI 3.141592653589793238462L 
 
-namespace replace {
+namespace gpl {
 
 
 FFT::FFT()
-  : binCntX_(0), binCntY_(0), binSizeX_(0), binSizeY_(0) {}
+  : binDensity_(nullptr),
+    electroPhi_(nullptr),
+    electroForceX_(nullptr),
+    electroForceY_(nullptr),
+    binCntX_(0), binCntY_(0), binSizeX_(0), binSizeY_(0) {}
 
 FFT::FFT(int binCntX, int binCntY, int binSizeX, int binSizeY)
   : binCntX_(binCntX), binCntY_(binCntY), 
@@ -56,15 +60,15 @@ FFT::FFT(int binCntX, int binCntY, int binSizeX, int binSizeY)
 FFT::~FFT() {
   using std::vector;
   for(int i=0; i<binCntX_; i++) {
-    delete(binDensity_[i]);
-    delete(electroPhi_[i]);
-    delete(electroForceX_[i]);
-    delete(electroForceY_[i]);
+    delete[] binDensity_[i];
+    delete[] electroPhi_[i];
+    delete[] electroForceX_[i];
+    delete[] electroForceY_[i];
   }
-  delete(binDensity_);
-  delete(electroPhi_);
-  delete(electroForceX_);
-  delete(electroForceY_);
+  delete[] binDensity_;
+  delete[] electroPhi_;
+  delete[] electroForceX_;
+  delete[] electroForceY_;
 
 
   csTable_.clear();
@@ -129,14 +133,14 @@ FFT::updateDensity(int x, int y, float density) {
 }
 
 std::pair<float, float> 
-FFT::getElectroForce(int x, int y) {
+FFT::getElectroForce(int x, int y) const {
   return std::make_pair(
       electroForceX_[x][y],
       electroForceY_[x][y]);
 }
 
 float
-FFT::getElectroPhi(int x, int y) {
+FFT::getElectroPhi(int x, int y) const {
   return electroPhi_[x][y]; 
 }
 

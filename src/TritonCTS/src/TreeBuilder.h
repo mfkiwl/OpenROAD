@@ -33,38 +33,50 @@
 //
 ///////////////////////////////////////////////////////////////////////////////
 
+#pragma once
 
-#ifndef CLOCKTREEBUILDER_H
-#define CLOCKTREEBUILDER_H
-
-#include <vector>
+#include <deque>
+#include <functional>
 #include <string>
 #include <unordered_map>
-#include <functional>
-#include <deque>
+#include <vector>
 
 #include "Clock.h"
-#include "Util.h"
 #include "CtsOptions.h"
 #include "TechChar.h"
+#include "Util.h"
 
-namespace TritonCTS {
+namespace cts {
 
-class TreeBuilder {
-public:
-        TreeBuilder(CtsOptions& options, Clock& clk) : 
-                    _options(&options), _clock(clk) {};
-        
-        virtual void run() = 0;
-        void setTechChar(TechChar& techChar) { _techChar = &techChar; }
-        const Clock& getClock() const { return _clock; }        
-        Clock& getClock() { return _clock; }        
+class TreeBuilder
+{
+ public:
+  TreeBuilder(CtsOptions* options, Clock& clk, TreeBuilder* parent)
+      : _options(options), _clock(clk), _parent(parent)
+  {
+    if (parent)
+      parent->_children.emplace_back(this);
+  }
 
-protected:
-        CtsOptions* _options = nullptr;
-        Clock       _clock;
-        TechChar*   _techChar = nullptr;
+  virtual void run() = 0;
+  void setTechChar(TechChar& techChar) { _techChar = &techChar; }
+  const Clock& getClock() const { return _clock; }
+  Clock& getClock() { return _clock; }
+  void addChild(TreeBuilder* child) { _children.emplace_back(child); }
+  std::vector<TreeBuilder*> getChildren() const { return _children; }
+  TreeBuilder* getParent() const { return _parent; }
+  unsigned getTreeBufLevels() const { return _treeBufLevels; }
+
+ protected:
+  CtsOptions* _options = nullptr;
+  Clock _clock;
+  TechChar* _techChar = nullptr;
+  TreeBuilder* _parent;
+  std::vector <TreeBuilder *> _children;
+  // Tree buffer levels. Number of buffers inserted in first leg of the HTree
+  // is buffer levels (depth) of tree in all legs.
+  // This becomes buffer level for whole tree thus
+  unsigned _treeBufLevels = 0;
 };
 
-}
-#endif
+}  // namespace cts

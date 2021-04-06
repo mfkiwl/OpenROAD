@@ -33,14 +33,20 @@
 #pragma once
 
 #include <tcl.h>
+
 #include <QDockWidget>
 #include <QLineEdit>
+#include <QPushButton>
 #include <QSettings>
 #include <QStringList>
 #include <QTextEdit>
 
 namespace odb {
 class dbDatabase;
+}
+
+namespace utl {
+class Logger;
 }
 
 namespace gui {
@@ -62,6 +68,8 @@ class ScriptWidget : public QDockWidget
   void readSettings(QSettings* settings);
   void writeSettings(QSettings* settings);
 
+  void setLogger(utl::Logger* logger);
+
  signals:
   // Commands might have effects that others need to know
   // (eg change placement of an instance requires a redraw)
@@ -71,23 +79,34 @@ class ScriptWidget : public QDockWidget
   // Triggered when the user hits return in the line edit
   void executeCommand();
 
- private:
-  void       keyPressEvent(QKeyEvent* e) override;
-  void       setupTcl();
-  void       updateOutput(int return_code);
-  static int channelOutput(ClientData  instanceData,
-                           const char* buf,
-                           int         toWrite,
-                           int*        errorCodePtr);
+  void pause();
 
-  QTextEdit*  output_;
-  QLineEdit*  input_;
+  void pauserClicked();
+
+ private:
+  void keyPressEvent(QKeyEvent* e) override;
+  void setupTcl();
+  void updateOutput(int return_code, bool command_finished);
+  static int channelOutput(ClientData instanceData,
+                           const char* buf,
+                           int toWrite,
+                           int* errorCodePtr);
+
+  QTextEdit* output_;
+  QLineEdit* input_;
+  QPushButton* pauser_;
   Tcl_Interp* interp_;
   QStringList outputBuffer_;
   QStringList history_;
-  int         historyPosition_;
+  int historyPosition_;
+  bool paused_;
+  utl::Logger* logger_;
 
-  static Tcl_ChannelType stdoutChannelType;
+  // Logger sink
+  template <typename Mutex>
+  class GuiSink;
+
+  static Tcl_ChannelType stdout_channel_type_;
 };
 
 }  // namespace gui

@@ -1,25 +1,42 @@
-// Copyright (c) 2019, Parallax Software, Inc.
-// 
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-// 
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-// 
-// You should have received a copy of the GNU General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+/////////////////////////////////////////////////////////////////////////////
+//
+// Copyright (c) 2019, OpenROAD
+// All rights reserved.
+//
+// BSD 3-Clause License
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+// * Redistributions of source code must retain the above copyright notice, this
+//   list of conditions and the following disclaimer.
+//
+// * Redistributions in binary form must reproduce the above copyright notice,
+//   this list of conditions and the following disclaimer in the documentation
+//   and/or other materials provided with the distribution.
+//
+// * Neither the name of the copyright holder nor the names of its
+//   contributors may be used to endorse or promote products derived from
+//   this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+// POSSIBILITY OF SUCH DAMAGE.
+//
+///////////////////////////////////////////////////////////////////////////////
 
-#include "dbReadVerilog.hh"
+#include "db_sta/dbReadVerilog.hh"
 
 #include <map>
 
-#include "sta/Error.hh"
-#include "sta/Report.hh"
-#include "sta/Debug.hh"
 #include "sta/Vector.hh"
 #include "sta/PortDirection.hh"
 #include "sta/ConcreteNetwork.hh"
@@ -30,10 +47,11 @@
 #include "opendb/db.h"
 
 #include "openroad/OpenRoad.hh"
-#include "openroad/Error.hh"
+#include "utl/Logger.h"
 
 namespace ord {
 
+using utl::ORD;
 using odb::dbDatabase;
 using odb::dbChip;
 using odb::dbBlock;
@@ -52,8 +70,6 @@ using sta::dbNetwork;
 using sta::ConcreteNetwork;
 using sta::Network;
 using sta::NetworkReader;
-using sta::Report;
-using sta::Debug;
 using sta::PortDirection;
 using sta::Library;
 using sta::Instance;
@@ -71,7 +87,8 @@ using sta::NetConnectedPinIterator;
 using sta::PinPathNameLess;
 using sta::LibertyCell;
 
-using ord::warn;
+using utl::Logger;
+using utl::STA;
 
 // Hierarchical network for read_verilog.
 // Verilog cells and module networks are built here.
@@ -145,7 +162,8 @@ class Verilog2db
 {
 public:
   Verilog2db(Network *verilog_network,
-	     dbDatabase *db);
+	     dbDatabase *db,
+             Logger *logger);
   void makeBlock();
   void makeDbNetlist();
 
@@ -159,20 +177,22 @@ protected:
   Network *network_;
   dbDatabase *db_;
   dbBlock *block_;
+  Logger *logger_;
   std::map<Cell*, dbMaster*> master_map_;
 };
 
 void
 dbLinkDesign(const char *top_cell_name,
 	     dbVerilogNetwork *verilog_network,
-	     dbDatabase *db)
+	     dbDatabase *db,
+             Logger *logger)
 {
   bool link_make_black_boxes = true;
   bool success = verilog_network->linkNetwork(top_cell_name,
 					      link_make_black_boxes,
 					      verilog_network->report());
   if (success) {
-    Verilog2db v2db(verilog_network, db);
+    Verilog2db v2db(verilog_network, db, logger);
     v2db.makeBlock();
     v2db.makeDbNetlist();
     deleteVerilogReader();
@@ -180,10 +200,12 @@ dbLinkDesign(const char *top_cell_name,
 }
 
 Verilog2db::Verilog2db(Network *network,
-		       dbDatabase *db) :
+		       dbDatabase *db,
+                       Logger *logger) :
   network_(network),
   db_(db),
-  block_(nullptr)
+  block_(nullptr),
+  logger_(logger)
 {
 }
 
@@ -193,11 +215,21 @@ Verilog2db::makeBlock()
   dbChip *chip = db_->getChip();
   if (chip == nullptr)
     chip = dbChip::create(db_);
-  dbBlock *block = chip->getBlock();
-  if (block)
-    dbBlock::destroy(block);
-  const char *design = network_->name(network_->cell(network_->topInstance()));
-  block_ = dbBlock::create(chip, design, network_->pathDivider());
+  block_ = chip->getBlock();
+  if (block_) {
+    auto insts = block_->getInsts();
+    for (auto iter = insts.begin(); iter != insts.end(); ) {
+      iter = dbInst::destroy(iter);
+    }
+    auto nets = block_->getNets();
+    for (auto iter = nets.begin(); iter != nets.end(); ) {
+      iter = dbNet::destroy(iter);
+    }
+  }
+  else {
+    const char *design = network_->name(network_->cell(network_->topInstance()));
+    block_ = dbBlock::create(chip, design, network_->pathDivider());
+  }
   dbTech *tech = db_->getTech();
   block_->setDefUnits(tech->getLefUnits());
   block_->setBusDelimeters('[', ']');
@@ -221,6 +253,10 @@ Verilog2db::makeDbInsts()
     dbMaster *master = getMaster(cell);
     if (master)
       dbInst::create(block_, master, inst_name);
+    else
+      logger_->warn(ORD, 1001, "instance {} LEF master {} not found.",
+                    inst_name,
+                    network_->name(cell));
   }
   delete leaf_iter;
 }
@@ -248,11 +284,14 @@ Verilog2db::makeDbNets(const Instance *inst)
   while (net_iter->hasNext()) {
     Net *net = net_iter->next();
     const char *net_name = network_->pathName(net);
-    if ((is_top || !hasTerminals(net))
-	&& !network_->isGround(net)
-	&& !network_->isPower(net)) {
+    if (is_top || !hasTerminals(net)) {
       dbNet *db_net = dbNet::create(block_, net_name);
       
+      if (network_->isPower(net))
+        db_net->setSigType(odb::dbSigType::POWER);
+      if (network_->isGround(net))
+        db_net->setSigType(odb::dbSigType::GROUND);
+
       // Sort connected pins for regression stability.
       PinSeq net_pins;
       NetConnectedPinIterator *pin_iter = network_->connectedPinIterator(net);
@@ -320,10 +359,13 @@ Verilog2db::getMaster(Cell *cell)
       // Check for corresponding liberty cell.
       LibertyCell *lib_cell = network_->libertyCell(cell);
       if (lib_cell == nullptr)
-	warn("LEF master %s has no liberty cell.", cell_name);
+	logger_->warn(ORD, 1011, "LEF master {} has no liberty cell.", cell_name);
       return master;
     }
     else {
+      LibertyCell *lib_cell = network_->libertyCell(cell);
+      if (lib_cell)
+        logger_->warn(ORD, 1012, "Liberty cell has no LEF master.", cell_name);
       // OpenSTA read_verilog warns about missing cells.
       master_map_[cell] = nullptr;
       return nullptr;

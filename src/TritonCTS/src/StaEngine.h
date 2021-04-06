@@ -33,9 +33,7 @@
 //
 ///////////////////////////////////////////////////////////////////////////////
 
-
-#ifndef STAENGINE_H
-#define STAENGINE_H
+#pragma once
 
 #include "CtsOptions.h"
 #include "openroad/OpenRoad.hh"
@@ -46,23 +44,28 @@ namespace sta {
 class Sta;
 class Sdc;
 class Network;
-}
+class Clock;
+}  // namespace sta
 
-namespace TritonCTS {
+namespace cts {
 
-class StaEngine {
-public:
-        StaEngine(CtsOptions& options) : _options(&options) {};
-        
-        void init();
-        void findClockRoots();
-private:
-        sta::dbSta*   _openSta   = nullptr;
-        sta::Sdc*     _sdc       = nullptr;
-        sta::Network* _network   = nullptr;    
-        CtsOptions*   _options   = nullptr;
+class StaEngine
+{
+ public:
+  StaEngine(CtsOptions* options) : _options(options){};
+
+  void init();
+  void findClockRoots(sta::Clock* clk,
+                      std::set<odb::dbNet*> &clockNets);
+  float getInputPinCap(odb::dbITerm* iterm);
+  bool isSink(odb::dbITerm* iterm);
+
+ private:
+  sta::dbSta* _openSta = nullptr;
+  sta::Sdc* _sdc = nullptr;
+  ord::OpenRoad* _openroad = nullptr;
+  sta::Network* _network = nullptr;
+  CtsOptions* _options = nullptr;
 };
 
-}
-
-#endif
+}  // namespace cts

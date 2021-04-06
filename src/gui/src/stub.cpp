@@ -34,12 +34,63 @@
 // disabling the GUI.  It is not included when Qt5 is found.
 
 #include <cstdio>
+
 #include "gui/gui.h"
 
 namespace gui {
 
+Gui* Gui::singleton_ = nullptr;
+
+Gui* gui::Gui::get()
+{
+  return singleton_;
+}
+
+void gui::Gui::registerRenderer(gui::Renderer*)
+{
+}
+
+void gui::Gui::unregisterRenderer(gui::Renderer*)
+{
+}
+
+void gui::Gui::zoomTo(const odb::Rect& rect_dbu)
+{
+}
+
+void gui::Gui::redraw()
+{
+}
+
+void gui::Gui::pause()
+{
+}
+
+void gui::Gui::addCustomVisibilityControl(const std::string& name,
+                                          bool initially_visible)
+{
+}
+
+bool gui::Gui::checkCustomVisibilityControl(const std::string& name)
+{
+  return false;
+}
+
+void Gui::status(const std::string& /* message */)
+{
+}
+
+Renderer::~Renderer()
+{
+}
+
+OpenDbDescriptor* OpenDbDescriptor::get()
+{
+  return nullptr;
+}
+
 // using namespace odb;
-int start_gui(int argc, char* argv[])
+int startGui(int argc, char* argv[])
 {
   printf(
       "[ERROR] This code was compiled with the GUI disabled.  Please recompile "
@@ -49,3 +100,12 @@ int start_gui(int argc, char* argv[])
 }
 
 }  // namespace gui
+
+namespace ord {
+
+class OpenRoad;
+void initGui(OpenRoad* openroad)
+{
+}
+
+}  // namespace ord

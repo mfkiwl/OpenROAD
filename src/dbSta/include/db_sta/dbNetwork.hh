@@ -1,18 +1,37 @@
-// OpenStaDB, OpenSTA on OpenDB
-// Copyright (c) 2019, Parallax Software, Inc.
-// 
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-// 
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-// 
-// You should have received a copy of the GNU General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+/////////////////////////////////////////////////////////////////////////////
+//
+// Copyright (c) 2019, OpenROAD
+// All rights reserved.
+//
+// BSD 3-Clause License
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+// * Redistributions of source code must retain the above copyright notice, this
+//   list of conditions and the following disclaimer.
+//
+// * Redistributions in binary form must reproduce the above copyright notice,
+//   this list of conditions and the following disclaimer in the documentation
+//   and/or other materials provided with the distribution.
+//
+// * Neither the name of the copyright holder nor the names of its
+//   contributors may be used to endorse or promote products derived from
+//   this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+// POSSIBILITY OF SUCH DAMAGE.
+//
+///////////////////////////////////////////////////////////////////////////////
 
 #pragma once
 
@@ -20,7 +39,13 @@
 #include "sta/GraphClass.hh"
 #include "opendb/db.h"
 
+namespace utl {
+class Logger;
+}
+
 namespace sta {
+
+using utl::Logger;
 
 using odb::dbDatabase;
 using odb::dbObject;
@@ -46,6 +71,7 @@ public:
   virtual ~dbNetwork();
   void setDb(dbDatabase *db);
   void setBlock(dbBlock *block);
+  void setLogger(Logger *logger);
   virtual void clear();
 
   void readLefAfter(dbLib *lib);
@@ -57,7 +83,6 @@ public:
   void makeLibrary(dbLib *lib);
   void makeCell(Library *library,
 		dbMaster *master);
-  void makeTopCell();
 
   virtual void location(const Pin *pin,
 			// Return values.
@@ -79,6 +104,7 @@ public:
   dbMaster *staToDb(const Cell *cell) const;
   dbMaster *staToDb(const LibertyCell *cell) const;
   dbMTerm *staToDb(const Port *port) const;
+  dbMTerm *staToDb(const LibertyPort *port) const;
   void staToDb(PortDirection *dir,
 	       // Return values.
 	       dbSigType &sig_type,
@@ -161,8 +187,6 @@ public:
   virtual NetTermIterator *termIterator(const Net *net) const;
   virtual Net *highestConnectedNet(Net *net) const;
 
-  virtual ConstantPinIterator *constantPinIterator();
-
   ////////////////////////////////////////////////////////////////
   // Edit functions
   virtual Instance *makeInstance(LibertyCell *cell,
@@ -180,11 +204,14 @@ public:
   virtual Pin *connect(Instance *inst,
 		       LibertyPort *port,
 		       Net *net);
+  void connectPinAfter(Pin *pin);
   virtual void disconnectPin(Pin *pin);
+  void disconnectPinBefore(Pin *pin);
   virtual void deletePin(Pin *pin);
   virtual Net *makeNet(const char *name,
 		       Instance *parent);
   virtual void deleteNet(Net *net);
+  void deleteNetBefore(Net *net);
   virtual void mergeInto(Net *net,
 			 Net *into_net);
   virtual Net *mergedInto(Net *net);
@@ -208,11 +235,15 @@ public:
   using NetworkReader::makeCell;
 
 protected:
-  void visitConnectedPins(const Net *net,
-			  PinVisitor &visitor,
-			  ConstNetSet &visited_nets) const;
+  void readDbNetlistAfter();
+  void makeTopCell();
+  void findConstantNets();
+  virtual void visitConnectedPins(const Net *net,
+                                  PinVisitor &visitor,
+                                  ConstNetSet &visited_nets) const;
 
   dbDatabase *db_;
+  Logger *logger_;
   dbBlock *block_;
   Instance *top_instance_;
   Cell *top_cell_;

@@ -1,5 +1,3 @@
-%module openroad
-
 /////////////////////////////////////////////////////////////////////////////
 //
 // BSD 3-Clause License
@@ -47,7 +45,7 @@
 #include "db_sta/dbNetwork.hh"
 #include "db_sta/dbReadVerilog.hh"
 #include "openroad/Version.hh"
-#include "openroad/Error.hh"
+#include "utl/Logger.h"
 #include "openroad/OpenRoad.hh"
 
 ////////////////////////////////////////////////////////////////
@@ -61,7 +59,7 @@ namespace ord {
 
 using sta::dbSta;
 using sta::dbNetwork;
-using sta::Resizer;
+using rsz::Resizer;
 
 using odb::dbDatabase;
 
@@ -69,6 +67,12 @@ OpenRoad *
 getOpenRoad()
 {
   return OpenRoad::openRoad();
+}
+
+utl::Logger *
+getLogger()
+{
+  return OpenRoad::openRoad()->getLogger();
 }
 
 dbDatabase *
@@ -114,46 +118,67 @@ getResizer()
   return openroad->getResizer();
 }
 
-TritonCTS::TritonCTSKernel *
+cts::TritonCTS *
 getTritonCts()
 {
   OpenRoad *openroad = getOpenRoad();
   return openroad->getTritonCts();
 }
 
-MacroPlace::TritonMacroPlace *
-getTritonMp()
+mpl::MacroPlacer *
+getMacroPlacer()
 {
   OpenRoad *openroad = getOpenRoad();
-  return openroad->getTritonMp();
+  return openroad->getMacroPlacer();
 }
 
-replace::Replace*
+gpl::Replace*
 getReplace()
 {
   OpenRoad *openroad = getOpenRoad();
   return openroad->getReplace();
 }
 
-OpenRCX::Ext *
+rcx::Ext *
 getOpenRCX()
 {
   OpenRoad *openroad = getOpenRoad();
   return openroad->getOpenRCX();
 }
 
-pdnsim::PDNSim*
+triton_route::TritonRoute *
+getTritonRoute()
+{
+  OpenRoad *openroad = getOpenRoad();
+  return openroad->getTritonRoute();
+}
+
+psm::PDNSim*
 getPDNSim()
 {
   OpenRoad *openroad = getOpenRoad();
   return openroad->getPDNSim();
 }
 
-FastRoute::FastRouteKernel*
+grt::GlobalRouter*
 getFastRoute()
 {
   OpenRoad *openroad = getOpenRoad();
   return openroad->getFastRoute();
+}
+
+ppl::IOPlacer*
+getIOPlacer()
+{
+  OpenRoad *openroad = getOpenRoad();
+  return openroad->getIOPlacer();
+}
+
+par::PartitionMgr*
+getPartitionMgr()
+{
+  OpenRoad *openroad = getOpenRoad();
+  return openroad->getPartitionMgr();
 }
 
 } // namespace ord
@@ -171,6 +196,7 @@ using sta::LibertyCell;
 
 using ord::OpenRoad;
 using ord::getOpenRoad;
+using ord::getLogger;
 using ord::getDb;
 using ord::ensureLinked;
 
@@ -184,15 +210,23 @@ using odb::dbTech;
 
 ////////////////////////////////////////////////////////////////
 //
-// C++ functions visible as TCL functions.
+// C++ functions visible as SWIG functions.
 //
 ////////////////////////////////////////////////////////////////
 
+#ifdef SWIGTCL
 %include "Exception.i"
 
 %typemap(in) vector<LibertyCell*> * {
   $1 = sta::tclListSeqLibertyCell($input, interp);
 }
+
+%typemap(in) utl::ToolId {
+  int length;
+  const char *arg = Tcl_GetStringFromObj($input, &length);
+  $1 = utl::Logger::findToolId(arg);
+}
+#endif
 
 %inline %{
 
@@ -219,10 +253,10 @@ read_lef_cmd(const char *filename,
 }
 
 void
-read_def_cmd(const char *filename, bool order_wires, bool continue_on_errors)
+read_def_cmd(const char *filename, bool order_wires, bool continue_on_errors, bool floorplan_init, bool incremental)
 {
   OpenRoad *ord = getOpenRoad();
-  ord->readDef(filename, order_wires, continue_on_errors);
+  ord->readDef(filename, order_wires, continue_on_errors, floorplan_init, incremental);
 }
 
 void
@@ -231,6 +265,15 @@ write_def_cmd(const char *filename,
 {
   OpenRoad *ord = getOpenRoad();
   ord->writeDef(filename, version);
+}
+
+
+void 
+write_cdl_cmd(const char *filename,
+              bool includeFillers)
+{
+  OpenRoad *ord = getOpenRoad();
+  ord->writeCdl(filename, includeFillers);
 }
 
 void
@@ -270,10 +313,26 @@ ensure_linked()
 void
 write_verilog_cmd(const char *filename,
 		  bool sort,
+		  bool include_pwr_gnd,
 		  vector<LibertyCell*> *remove_cells)
 {
   OpenRoad *ord = getOpenRoad();
-  ord->writeVerilog(filename, sort, remove_cells);
+  ord->writeVerilog(filename, sort, include_pwr_gnd, remove_cells);
+}
+
+void
+set_debug_level(const char* tool_name,
+                const char* group,
+                int level)
+{
+  using namespace ord;
+  auto logger = getLogger();
+
+  auto id = utl::Logger::findToolId(tool_name);
+  if (id == utl::UKN) {
+    logger->error(utl::ORD, 15, "Unknown tool name {}", tool_name);
+  }
+  logger->setDebugLevel(id, group, level);
 }
 
 ////////////////////////////////////////////////////////////////
@@ -386,18 +445,30 @@ set_cmd_sta(sta::Sta *sta)
   sta::Sta::setSta(sta);
 }
 
-// Used by test/error1.tcl
-void
-test_error1()
-{
-  ord::error("this is only a test.");
-}
-
 bool
 units_initialized()
 {
   OpenRoad *openroad = getOpenRoad();
   return openroad->unitsInitialized();
+}
+
+#ifdef ENABLE_PYTHON3
+void
+python_cmd(const char* py_command)
+{
+  OpenRoad *openroad = getOpenRoad();
+  return openroad->pythonCommand(py_command);
+}
+#endif
+
+namespace ord {
+
+void
+delete_all_memory()
+{
+  ord::deleteAllMemory();
+}
+
 }
 
 %} // inline
