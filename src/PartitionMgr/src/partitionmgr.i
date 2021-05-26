@@ -35,11 +35,8 @@
 
 %{
 #include "PartitionMgr.h"
-#include "openroad/OpenRoad.hh"
-#include <algorithm>
-#include <iterator>
-#include <sstream>
-#include <time.h>
+#include "ord/OpenRoad.hh"
+#include <set>
 
 namespace ord {
 // Defined in OpenRoad.i
@@ -51,6 +48,10 @@ using ord::getPartitionMgr;
 
 %include "../../Exception.i"
 
+%import <std_vector.i>
+namespace std {
+  %template(IntVector) vector<int>;
+}
 
 %inline %{
 
@@ -110,12 +111,8 @@ void set_cut_hop_ratio(float value) {
         getPartitionMgr()->getOptions().setCutHopRatio(value);
 }
 
-void set_architecture(const char* topology) {
-        std::stringstream ss(topology);
-        std::istream_iterator<int> begin(ss);
-        std::istream_iterator<int> end;
-        std::vector<int> archTopology(begin, end);
-        getPartitionMgr()->getOptions().setArchTopology(archTopology);
+void set_architecture(const std::vector<int>& topology) {
+        getPartitionMgr()->getOptions().setArchTopology(topology);
 }
 
 void clear_architecture() {
@@ -127,41 +124,25 @@ void set_refinement(unsigned value) {
         getPartitionMgr()->getOptions().setRefinement(value);
 }
 
-void set_seeds(const char* seeds) {
-        std::stringstream ss(seeds);
-        std::istream_iterator<int> begin(ss);
-        std::istream_iterator<int> end;
-        std::vector<int> seedVector(begin, end);
-        getPartitionMgr()->getOptions().setSeeds(seedVector);
+void set_seeds(const std::vector<int>& seeds) {
+  std::set<int> seedSet(seeds.begin(), seeds.end());
+  getPartitionMgr()->getOptions().setSeeds(seedSet);
 }
 
 void set_existing_id(int value) {
         getPartitionMgr()->getOptions().setExistingID(value);
 }
 
-void generate_seeds(unsigned value) {
-        std::vector<int> seedVector;
-        std::srand(42);
-        for (int i = 0; i < value; i++)
-        {
-                int seedVar = 5;
-                int seed = 0;
-                do
-                {
-                        seed = std::rand();
-                        seedVar += 5;
-                } while (std::find(seedVector.begin(), seedVector.end(), seed) != seedVector.end());
-                seedVector.push_back(seed);
-        }
-        getPartitionMgr()->getOptions().setSeeds(seedVector);
+void set_random_seed(int value) {
+        getPartitionMgr()->getOptions().setRandomSeed(value);
 }
 
-void set_partition_ids_to_test(const char* ids) {
-        std::stringstream ss(ids);
-        std::istream_iterator<int> begin(ss);
-        std::istream_iterator<int> end;
-        std::vector<int> partIds(begin, end);
-        getPartitionMgr()->getOptions().setPartitionsToTest(partIds);
+void generate_seeds(unsigned value) {
+        getPartitionMgr()->getOptions().generateSeeds(value);
+}
+
+void set_partition_ids_to_test(const std::vector<int>& ids) {
+        getPartitionMgr()->getOptions().setPartitionsToTest(ids);
 }
 
 void set_evaluation_function(const char* function) {
@@ -233,6 +214,11 @@ void run_clustering() {
 
 void report_graph() {
         getPartitionMgr()->reportGraph();
+}
+
+void write_partition_verilog(int id, const char* portprefix, const char* module_suffix, const char* path) {
+  write_partitioning_to_db(id);
+  getPartitionMgr()->writePartitionVerilog(path, portprefix, module_suffix);
 }
 
 %}

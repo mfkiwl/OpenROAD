@@ -1,12 +1,14 @@
 record_tests {
   error1
-  set_layer_rc1
+  get_core_die_areas
 }
 
-define_test_group "non_flow" {"error1"}
+define_test_group "non_flow" {
+  error1
+  get_core_die_areas
+}
 
-# Flow tests only check the return code and do not compare output logs.
-# These tests require TritonRoute in $PATH.
+# Flow tests only check the last line in the log (pass/fail).
 record_flow_tests {
   gcd_nangate45
   aes_nangate45

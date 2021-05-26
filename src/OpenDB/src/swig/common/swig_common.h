@@ -40,6 +40,8 @@ int write_lef(odb::dbLib* lib, const char* path);
 
 int write_tech_lef(odb::dbTech* tech, const char* path);
 
+int write_macro_lef(odb::dbLib* lib, const char* path);
+
 odb::dbChip* read_def(odb::dbDatabase* db, std::string path);
 
 int write_def(odb::dbBlock* block,
@@ -80,3 +82,13 @@ std::vector<Polygon90> getPolygons(const Polygon90Set* set);
 std::vector<odb::Rect> getRectangles(const Polygon90Set* set);
 
 std::vector<odb::Point> getPoints(const Polygon90* polygon);
+
+void createSBoxes(odb::dbSWire* swire,
+                  odb::dbTechLayer* layer,
+                  std::vector<odb::Rect> rects,
+                  odb::dbWireShapeType type);
+
+void createSBoxes(odb::dbSWire* swire,
+                  odb::dbVia* via,
+                  std::vector<odb::Point> points,
+                  odb::dbWireShapeType type);

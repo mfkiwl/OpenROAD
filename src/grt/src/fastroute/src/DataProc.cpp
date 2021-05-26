@@ -49,7 +49,7 @@ namespace grt {
 // Global variables
 int XRANGE, YRANGE;
 int xGrid, yGrid, numGrids, numNets, invalidNets;
-int *vCapacity3D, *hCapacity3D;
+short *vCapacity3D, *hCapacity3D;
 float vCapacity_lb, hCapacity_lb, vCapacity_ub, hCapacity_ub;
 int MaxDegree;
 int *MinWidth, *MinSpacing, *ViaSpacing;
@@ -102,8 +102,8 @@ DTYPE** gs;  // the copy of vertical sequence for nets, used for second FLUTE
 Edge3D* h_edges3D;
 Edge3D* v_edges3D;
 
-OrderNetPin* treeOrderPV;
-OrderTree* treeOrderCong;
+std::vector<OrderNetPin> treeOrderPV;
+std::vector<OrderTree> treeOrderCong;
 int numTreeedges;
 int viacost;
 
@@ -129,7 +129,7 @@ short** heap23D;
 
 float *h_costTable, *v_costTable;
 Bool stopDEC, errorPRONE;
-OrderNetEdge* netEO;
+std::vector<OrderNetEdge> netEO;
 int *xcor, *ycor, *dcor;
 
 StTree* sttreesBK;

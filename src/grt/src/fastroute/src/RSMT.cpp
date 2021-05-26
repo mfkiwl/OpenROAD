@@ -67,97 +67,14 @@ struct wire
   int netID;
 };
 
-// global variable
-// ** V_table;
-// int ** H_table;
-
-static int ordery1(const void* a, const void* b)
+int orderx(const struct pnt* a, const struct pnt* b)
 {
-  struct wire *pa, *pb;
-
-  pa = *(struct wire**) a;
-  pb = *(struct wire**) b;
-
-  if (pa->y1 < pb->y1)
-    return -1;
-  if (pa->y1 > pb->y1)
-    return 1;
-  return 0;
-  // return ((struct Segment*)a->x1-(struct Segment*)b->x1);
+  return a->x < b->x;
 }
 
-static int ordery2(const void* a, const void* b)
+static int ordery(const struct pnt* a, const struct pnt* b)
 {
-  struct wire *pa, *pb;
-
-  pa = *(struct wire**) a;
-  pb = *(struct wire**) b;
-
-  if (pa->y2 < pb->y2)
-    return -1;
-  if (pa->y2 > pb->y2)
-    return 1;
-  return 0;
-  // return ((struct Segment*)a->x1-(struct Segment*)b->x1);
-}
-
-static int orderx1(const void* a, const void* b)
-{
-  struct wire *pa, *pb;
-
-  pa = *(struct wire**) a;
-  pb = *(struct wire**) b;
-
-  if (pa->x1 < pb->x1)
-    return -1;
-  if (pa->x1 > pb->x1)
-    return 1;
-  return 0;
-  // return ((struct Segment*)a->x1-(struct Segment*)b->x1);
-}
-
-static int orderx2(const void* a, const void* b)
-{
-  struct wire *pa, *pb;
-
-  pa = *(struct wire**) a;
-  pb = *(struct wire**) b;
-
-  if (pa->x2 < pb->x2)
-    return -1;
-  if (pa->x2 > pb->x2)
-    return 1;
-  return 0;
-  // return ((struct Segment*)a->x1-(struct Segment*)b->x1);
-}
-
-int orderx(const void* a, const void* b)
-{
-  struct pnt *pa, *pb;
-
-  pa = *(struct pnt**) a;
-  pb = *(struct pnt**) b;
-
-  if (pa->x < pb->x)
-    return -1;
-  if (pa->x > pb->x)
-    return 1;
-  return 0;
-  // return Y(*(struct Segment*)a.x1-*(struct Segment*)b.x1);
-}
-
-static int ordery(const void* a, const void* b)
-{
-  struct pnt *pa, *pb;
-
-  pa = *(struct pnt**) a;
-  pb = *(struct pnt**) b;
-
-  if (pa->y < pb->y)
-    return -1;
-  if (pa->y > pb->y)
-    return 1;
-  return 0;
+  return a->y < b->y;
 }
 
 // binary search to map the new coordinates to original coordinates
@@ -263,8 +180,8 @@ void fluteNormal(int netID,
   DTYPE *xs, *ys, minval, x_max, x_min, x_mid, y_max, y_min, y_mid, *tmp_xs,
       *tmp_ys;
   int* s;
-  int i, j, k, minidx;
-  struct pnt *pt, **ptp, *tmpp;
+  int i, j, minidx;
+  struct pnt *pt, *tmpp;
 
   if (d == 2) {
     t->deg = 2;
@@ -344,8 +261,8 @@ void fluteNormal(int netID,
     tmp_ys = new DTYPE[d];
 
     s = new int[d];
-    pt = new struct pnt[d + 1];
-    ptp = new struct pnt*[d + 1];
+    pt = new struct pnt[d];
+    std::vector<struct pnt*> ptp(d);
 
     for (i = 0; i < d; i++) {
       pt[i].x = x[i];
@@ -368,22 +285,8 @@ void fluteNormal(int netID,
         ptp[minidx] = tmpp;
       }
     } else {
-      qsort(ptp, d, sizeof(struct point*), orderx);
+      std::stable_sort(ptp.begin(), ptp.end(), orderx);
     }
-
-#if REMOVE_DUPLICATE_PIN == 1
-    ptp[d] = &pt[d];
-    ptp[d]->x = ptp[d]->y = -999999;
-    j = 0;
-    for (i = 0; i < d; i++) {
-      for (k = i + 1; ptp[k]->x == ptp[i]->x; k++)
-        if (ptp[k]->y == ptp[i]->y)  // pins k and i are the same
-          break;
-      if (ptp[k]->x != ptp[i]->x)
-        ptp[j++] = ptp[i];
-    }
-    d = j;
-#endif
 
     for (i = 0; i < d; i++) {
       xs[i] = ptp[i]->x;
@@ -408,7 +311,7 @@ void fluteNormal(int netID,
       ys[d - 1] = ptp[d - 1]->y;
       s[d - 1] = ptp[d - 1]->o;
     } else {
-      qsort(ptp, d, sizeof(struct point*), ordery);
+      std::stable_sort(ptp.begin(), ptp.end(), ordery);
       for (i = 0; i < d; i++) {
         ys[i] = ptp[i]->y;
         s[i] = ptp[i]->o;
@@ -442,7 +345,6 @@ void fluteNormal(int netID,
     delete[] tmp_ys;
     delete[] s;
     delete[] pt;
-    delete[] ptp;
   }
 }
 
@@ -454,10 +356,10 @@ void fluteCongest(int netID,
                   float coeffV,
                   Tree* t)
 {
-  DTYPE *xs, *ys, *nxs, *nys, *x_seg, *y_seg, minval, x_max, x_min, x_mid,
+  DTYPE *xs, *ys, *nxs, *nys, *x_seg, *y_seg, x_max, x_min, x_mid,
       y_max, y_min, y_mid;
   int* s;
-  int i, j, k, minidx, grid;
+  int i, j, k, grid;
   DTYPE height, width;
   int usageH, usageV;
   float coeffH = 1;
@@ -614,11 +516,8 @@ void fluteCongest(int netID,
 
 Bool netCongestion(int netID)
 {
-  int i, j, edgeID, edgelength, *gridsX, *gridsY;
-  int n1, n2, x1, y1, x2, y2, distance, grid, ymin, ymax;
-  int cnt, Zpoint;
-  TreeEdge* treeedge;
-  TreeNode* treenodes;
+  int i, j;
+  int grid, ymin, ymax;
   //  Bool Congested;
   Segment* seg;
 

@@ -4,7 +4,7 @@ set run_dir "$::env(HOME)/ispd/runs"
 set parallel_jobs 4
 
 
-proc genFiles { run_dir ispd_year design } {
+proc genFiles { run_dir ispd_year design drv } {
     # host setup
     set currentdir  [file normalize [file dirname [file normalize [info script]]]/../ ]
     set program     "$currentdir/../../build/src/openroad"
@@ -16,22 +16,26 @@ proc genFiles { run_dir ispd_year design } {
 
     file mkdir $run_dir
     file mkdir $run_dir/$design
-    puts "Create param file for $design"
-    set    paramFile [open "$run_dir/$design/run.param" w]
-    puts  $paramFile "guide:$bench_dir/$design/$design.input.guide"
-    puts  $paramFile "outputguide:$design.output.guide.mod"
-    puts  $paramFile "outputMaze:$design.output.maze.log"
-    puts  $paramFile "outputDRC:$design.outputDRC.rpt"
-    puts  $paramFile "threads:$threads"
-    puts  $paramFile "verbose:$verbose"
-    close $paramFile
 
     puts "Create tcl script for $design"
     set    tclFile [open "$run_dir/$design/run.tcl" w]
+    puts  $tclFile "set_thread_count $threads"
     puts  $tclFile "read_lef $bench_dir/$design/$design.input.lef"
     puts  $tclFile "read_def $bench_dir/$design/$design.input.def"
-    puts  $tclFile "detailed_route -param $run_dir/$design/run.param"
+    puts  $tclFile "detailed_route -guide $bench_dir/$design/$design.input.guide \\"
+    puts  $tclFile "               -output_guide $design.output.guide.mod \\"
+    puts  $tclFile "               -output_maze $design.output.maze.log \\"
+    puts  $tclFile "               -output_drc $design.output.drc.rpt \\"
+    puts  $tclFile "               -verbose $verbose"
     puts  $tclFile "write_def $run_dir/$design/$design.output.def"
+    puts  $tclFile "set drv_count \[detailed_route_num_drvs] "
+    puts  $tclFile "if { \$drv_count > $drv } {"
+    puts  $tclFile "  puts \"ERROR: Increase in number of violations from $drv to \$drv_count\""
+    puts  $tclFile "  exit 1"
+    puts  $tclFile "} elseif { \$drv_count < $drv } {"
+    puts  $tclFile "  puts \"NOTICE: Decrease in number of violations from $drv to \$drv_count\""
+    puts  $tclFile "  exit 2"
+    puts  $tclFile "}"
     close $tclFile
 
     puts "Create run script for $design"
@@ -62,7 +66,18 @@ set design_list_ispd18 " \
     ispd18_test2 \
     ispd18_test1 \
     "
-
+set drvs_ispd18 { \
+    0 \
+    0 \
+    0 \
+    0 \
+    0 \
+    0 \
+    17 \
+    3 \
+    0 \
+    0 \
+    }
 set design_list_ispd19 " \
     ispd19_test10 \
     ispd19_test9 \
@@ -75,13 +90,24 @@ set design_list_ispd19 " \
     ispd19_test2 \
     ispd19_test1 \
     "
-
-foreach design $design_list_ispd18 {
-    genFiles $run_dir 18 $design
+set drvs_ispd19 { \
+    27 \
+    1 \
+    0 \
+    0 \
+    0 \
+    0 \
+    0 \
+    0 \
+    0 \
+    0 \
+    }
+foreach design $design_list_ispd18 drv $drvs_ispd18 {
+    genFiles $run_dir 18 $design $drv
 }
 
-foreach design $design_list_ispd19 {
-    genFiles $run_dir 19 $design
+foreach design $design_list_ispd19 drv $drvs_ispd19 {
+    genFiles $run_dir 19 $design $drv
 }
 
 cd $run_dir

@@ -54,6 +54,7 @@ namespace utl {
     X(DPL) \
     X(DRT) \
     X(FIN) \
+    X(FLW) \
     X(GPL) \
     X(GRT) \
     X(GUI) \
@@ -184,6 +185,7 @@ class Logger
   }
 
   void addSink(spdlog::sink_ptr sink);
+  void addMetricsSink(const char *metrics_filename);
 
  private:
   template <typename... Args>
@@ -244,7 +246,7 @@ class Logger
   static constexpr int max_message_id = 9999;
 
   // Stop issuing messages of a given tool/id when this limit is hit.
-  static constexpr int max_message_print = 1000;
+  static int max_message_print;
 
   std::vector<spdlog::sink_ptr> sinks_;
   std::shared_ptr<spdlog::logger> logger_;

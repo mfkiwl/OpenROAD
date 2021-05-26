@@ -38,6 +38,7 @@
 #endif
 
 #include <boost/test/data/test_case.hpp>
+#include <iostream>
 
 #include "fixture.h"
 #include "frDesign.h"
@@ -314,6 +315,47 @@ BOOST_DATA_TEST_CASE(spacing_prl,
   }
 }
 
+// Check violation for spacing two widths with design rule width on macro
+// obstruction
+BOOST_DATA_TEST_CASE(design_rule_width, bdata::make({true, false}), legal)
+{
+  // Setup
+  makeSpacingTableTwConstraint(2, {90, 190}, {-1, -1}, {{0, 50}, {50, 100}});
+  /*
+  WIDTH  90     0      50
+  WIDTH 190     50    150
+  */
+  USEMINSPACING_OBS = false;  // Do not use layer width as Obs width
+  frNet* n1 = makeNet("n1");
+
+  makePathseg(n1, 2, {0, 50}, {500, 50}, 100);
+  auto block = makeMacro("DRW");
+  makeMacroObs(block, 0, 140, 500, 340, 2, legal ? 100 : -1);
+  makeInst("i1", block, 0, 0);
+  /*
+  If DESIGNRULEWIDTH is 100
+    width(n1) = 100      width(obs) = 100 : reqSpcVal = 0
+  legal
+
+  if DESIGNRULEWIDTH is -1 (undefined)
+    width(n1) = 100      width(obs) = 200 : reqSpcVal = 100
+  illegal
+  */
+  runGC();
+
+  // Test the results
+  auto& markers = worker.getMarkers();
+  if (legal)
+    BOOST_TEST(markers.size() == 0);
+  else {
+    BOOST_TEST(markers.size() == 1);
+    testMarker(markers[0].get(),
+               2,
+               frConstraintTypeEnum::frcSpacingTableTwConstraint,
+               frBox(0, 100, 500, 140));
+  }
+}
+
 // Check for a min step violation.  The checker seems broken
 // so this test is disabled.
 BOOST_AUTO_TEST_CASE(min_step, *boost::unit_test::disabled())
@@ -411,12 +453,81 @@ BOOST_AUTO_TEST_CASE(min_enclosed_area)
              frBox(50, 50, 150, 150));
 }
 
+// Check for a spacing table influence violation.
+BOOST_AUTO_TEST_CASE(spacing_table_infl_vertical)
+{
+  // Setup
+  makeSpacingTableInfluenceConstraint(2, {10}, {{200, 100}});
+
+  frNet* n1 = makeNet("n1");
+
+  makePathseg(n1, 2, {50, 0}, {50, 200});
+  makePathseg(n1, 2, {0, 100}, {350, 100});
+  makePathseg(n1, 2, {0, 250}, {350, 250});
+
+  runGC();
+
+  // Test the results
+  auto& markers = worker.getMarkers();
+
+  BOOST_TEST(markers.size() == 1);
+  testMarker(markers[0].get(),
+             2,
+             frConstraintTypeEnum::frcSpacingTableInfluenceConstraint,
+             frBox(100, 150, 300, 200));
+}
+// Check for a spacing table influence violation.
+BOOST_AUTO_TEST_CASE(spacing_table_infl_horizontal)
+{
+  // Setup
+  makeSpacingTableInfluenceConstraint(2, {10}, {{200, 150}});
+
+  frNet* n1 = makeNet("n1");
+
+  makePathseg(n1, 2, {0, 500}, {500, 500});
+  makePathseg(n1, 2, {100, 0}, {100, 500});
+  makePathseg(n1, 2, {300, 0}, {300, 500});
+  runGC();
+
+  // Test the results
+  auto& markers = worker.getMarkers();
+
+  BOOST_TEST(markers.size() == 1);
+  testMarker(markers[0].get(),
+             2,
+             frConstraintTypeEnum::frcSpacingTableInfluenceConstraint,
+             frBox(150, 250, 250, 450));
+}
+
+// Check for a spacing table twowidths violation.
+BOOST_AUTO_TEST_CASE(spacing_table_twowidth)
+{
+  // Setup
+  makeSpacingTableTwConstraint(2, {90, 190}, {-1, -1}, {{0, 50}, {50, 100}});
+
+  frNet* n1 = makeNet("n1");
+
+  makePathseg(n1, 2, {0, 50}, {500, 50}, 100);
+  makePathseg(n1, 2, {0, 240}, {500, 240}, 200);
+
+  runGC();
+
+  // Test the results
+  auto& markers = worker.getMarkers();
+
+  BOOST_TEST(markers.size() == 1);
+  testMarker(markers[0].get(),
+             2,
+             frConstraintTypeEnum::frcSpacingTableTwConstraint,
+             frBox(0, 100, 500, 140));
+}
+
 // Check for a basic end-of-line (EOL) spacing violation.
 BOOST_DATA_TEST_CASE(eol_basic, (bdata::make({true, false})), lef58)
 {
   // Setup
   if (lef58)
-    makeLef58SpacingEndOfLineConstraint(2);
+    makeLef58SpacingEolConstraint(2);
   else
     makeSpacingEndOfLineConstraint(2);
 
@@ -443,8 +554,8 @@ BOOST_DATA_TEST_CASE(eol_parallel_edge, (bdata::make({true, false})), lef58)
 {
   // Setup
   if (lef58)
-    makeLef58SpacingEndOfLineConstraint(
-        2, /* par_space */ 200, /* par_within */ 200);
+    makeLef58SpacingEolParEdgeConstraint(
+        makeLef58SpacingEolConstraint(2), 200, 200);
   else
     makeSpacingEndOfLineConstraint(
         2, /* par_space */ 200, /* par_within */ 200);
@@ -473,10 +584,8 @@ BOOST_DATA_TEST_CASE(eol_parallel_two_edge, (bdata::make({true, false})), lef58)
 {
   // Setup
   if (lef58)
-    makeLef58SpacingEndOfLineConstraint(2,
-                                        /* par_space */ 200,
-                                        /* par_within */ 200,
-                                        /* two_edges */ true);
+    makeLef58SpacingEolParEdgeConstraint(
+        makeLef58SpacingEolConstraint(2), 200, 200, true);
   else
     makeSpacingEndOfLineConstraint(2,
                                    /* par_space */ 200,
@@ -509,13 +618,8 @@ BOOST_DATA_TEST_CASE(eol_min_max,
                      twoSides,
                      legal)
 {
-  makeLef58SpacingEndOfLineConstraint(2,
-                                      /* no par edge*/ -1,
-                                      /* x */ -1,
-                                      /* x */ true,
-                                      500,
-                                      max,
-                                      twoSides);
+  makeLef58SpacingEolMinMaxLenConstraint(
+      makeLef58SpacingEolConstraint(2), 500, max, twoSides);
   frNet* n1 = makeNet("n1");
   frCoord y = 500;
   if (twoSides)  // both sides need to meet minMax for eolSpacing to be
@@ -525,8 +629,8 @@ BOOST_DATA_TEST_CASE(eol_min_max,
     if (max && legal)
       y += 10;  // right(510) > max(500) --> minMax violated --> legal
     else if (!max && !legal)
-      y += 100;  // right(600) & left(500) >= min(500) --> minMax is met
-                 // --> illegal
+      y += 100;      // right(600) & left(500) >= min(500) --> minMax is met
+                     // --> illegal
   } else if (legal)  // both sides need to violate minMax to have no eolSpacing
                      // violations
   {
@@ -554,5 +658,31 @@ BOOST_DATA_TEST_CASE(eol_min_max,
                  frBox(450, y, 550, 650));
   }
 }
+BOOST_DATA_TEST_CASE(eol_enclose_cut,
+                     (bdata::make({0, 350})) ^ (bdata::make({true, false})),
+                     y,
+                     legal)
+{
+  addLayer(design->getTech(), "v2", frLayerTypeEnum::CUT);
+  addLayer(design->getTech(), "m2", frLayerTypeEnum::ROUTING);
+  makeLef58SpacingEolCutEncloseConstraint(makeLef58SpacingEolConstraint(4));
+  frNet* n1 = makeNet("n1");
+  frViaDef* vd = makeViaDef("v", 3, {0, 0}, {100, 100});
 
+  makePathseg(n1, 4, {500, 0}, {500, 500});
+  makePathseg(n1, 4, {0, 700}, {1000, 700});
+  auto v = makeVia(vd, n1, {400, y});
+  runGC();
+  auto& markers = worker.getMarkers();
+  if (legal)
+    BOOST_TEST(markers.size() == 0);
+  else {
+    BOOST_TEST(markers.size() == 1);
+    if (markers.size() == 1)
+      testMarker(markers[0].get(),
+                 4,
+                 frConstraintTypeEnum::frcLef58SpacingEndOfLineConstraint,
+                 frBox(450, 500, 550, 650));
+  }
+}
 BOOST_AUTO_TEST_SUITE_END();

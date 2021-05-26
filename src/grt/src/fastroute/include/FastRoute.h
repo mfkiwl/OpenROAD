@@ -55,14 +55,14 @@ namespace grt {
 class FastRouteCore
 {
  public:
-  FastRouteCore(utl::Logger* log);
+  FastRouteCore(odb::dbDatabase* db, utl::Logger* log);
   ~FastRouteCore();
 
   void deleteComponents();
   void clear();
   void setGridsAndLayers(int x, int y, int nLayers);
-  void addVCapacity(int verticalCapacity, int layer);
-  void addHCapacity(int horizontalCapacity, int layer);
+  void addVCapacity(short verticalCapacity, int layer);
+  void addHCapacity(short horizontalCapacity, int layer);
   void addMinWidth(int width, int layer);
   void addMinSpacing(int spacing, int layer);
   void addViaSpacing(int spacing, int layer);
@@ -76,7 +76,8 @@ class FastRouteCore
              int validPins,
              float alpha,
              bool isClock,
-             int cost);
+             int cost,
+             std::vector<int> edgeCostPerLayer);
   void initEdges();
   void setNumAdjustments(int nAdjustements);
   void addAdjustment(long x1,
@@ -89,7 +90,7 @@ class FastRouteCore
                      bool isReduce = true);
   void initAuxVar();
   NetRouteMap run();
-  void updateDbCongestion(odb::dbDatabase* db);
+  void updateDbCongestion();
 
   int getEdgeCapacity(long x1, long y1, int l1, long x2, long y2, int l2);
   int getEdgeCurrentResource(long x1,
@@ -119,10 +120,23 @@ class FastRouteCore
   void setOverflowIterations(int iterations);
   void setPDRevForHighFanout(int pdRevHihgFanout);
   void setAllowOverflow(bool allow);
+  void computeCongestionInformation();
+  std::vector<int> getOriginalResources();
+  std::vector<int> getTotalCapacityPerLayer() { return cap_per_layer; }
+  std::vector<int> getTotalUsagePerLayer() { return usage_per_layer; }
+  std::vector<int> getTotalOverflowPerLayer() { return overflow_per_layer; }
+  std::vector<int> getMaxHorizontalOverflows() { return max_h_overflow; }
+  std::vector<int> getMaxVerticalOverflows() { return max_v_overflow; }
 
  private:
   NetRouteMap getRoutes();
   int maxNetDegree;
+  std::vector<int> cap_per_layer;
+  std::vector<int> usage_per_layer;
+  std::vector<int> overflow_per_layer;
+  std::vector<int> max_h_overflow;
+  std::vector<int> max_v_overflow;
+  odb::dbDatabase* db_;
 };
 
 }  // namespace grt

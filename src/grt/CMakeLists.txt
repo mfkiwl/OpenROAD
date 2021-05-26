@@ -53,7 +53,7 @@ target_sources(grt
     src/MakeFastRoute.cpp
     src/Net.cpp
     src/Pin.cpp
-    src/RcTreeBuilder.cpp
+    src/MakeWireParasitics.cpp
 )
 
 target_include_directories(grt
@@ -65,7 +65,7 @@ target_link_libraries(grt
     utl
     FastRoute4.1
     pdrev
-    antennachecker
+    ant
     dpl
     dbSta
     gui

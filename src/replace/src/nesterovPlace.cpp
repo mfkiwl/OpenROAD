@@ -39,6 +39,8 @@
 #include "timingBase.h"
 #include "utl/Logger.h"
 #include <iostream>
+#include <sstream>
+#include <iomanip>
 using namespace std;
 
 #include "plot.h"
@@ -54,11 +56,13 @@ getDistance(const vector<FloatPoint>& a, const vector<FloatPoint>& b);
 static float
 getSecondNorm(const vector<FloatPoint>& a);
 
+static std::string
+getZeroFillStr(int iterNum);
+
 NesterovPlaceVars::NesterovPlaceVars()
 {
   reset();
 }
-
 
 void
 NesterovPlaceVars::reset() {
@@ -232,9 +236,9 @@ void NesterovPlace::init() {
 
   debugPrint(log_, GPL, "replace", 3, "npinit: InitialStepLength {:g}", stepLength_);
 
-  if( isnan(stepLength_) ) {
-    log_->error(GPL, 304, "RePlAce diverged on initial iteration.");
-    isDiverged_ = true;
+  if( isnan(stepLength_) || isinf(stepLength_) ) {
+    log_->error(GPL, 304, "RePlAce diverged at initial iteration. "
+       "Re-run with a smaller init_density_penalty value.");
   }
 }
 
@@ -293,6 +297,9 @@ void NesterovPlace::reset() {
   prevHpwl_ = 0;
   isDiverged_ = false;
   isRoutabilityNeed_ = true;
+  
+  divergeMsg_ = "";
+  divergeCode_ = 0;
 }
 
 // to execute following function,
@@ -368,6 +375,8 @@ NesterovPlace::updateGradients(
   if( isnan(wireLengthGradSum_) || isinf(wireLengthGradSum_) ||
       isnan(densityGradSum_) || isinf(densityGradSum_) ) {
     isDiverged_ = true;
+    divergeMsg_ = "RePlAce diverged at wire/density gradient Sum.";
+    divergeCode_ = 306; 
   }
 }
 
@@ -377,22 +386,23 @@ NesterovPlace::doNesterovPlace() {
   // if replace diverged in init() function, 
   // replace must be skipped.
   if( isDiverged_ ) {
-    string msg = "RePlAce diverged.";
-    log_->error(GPL, 200, msg);
+    log_->error(GPL, divergeCode_, divergeMsg_);
     return;
   }
 
 #ifdef ENABLE_CIMG_LIB  
   pe.setPlacerBase(pb_);
   pe.setNesterovBase(nb_);
+  pe.setLogger(log_);
   pe.Init();
-      
-  pe.SaveCellPlotAsJPEG("Nesterov - BeforeStart", true,
-     "./plot/cell/cell_0");
-  pe.SaveBinPlotAsJPEG("Nesterov - BeforeStart",
-     "./plot/bin/bin_0");
-  pe.SaveArrowPlotAsJPEG("Nesterov - BeforeStart",
-     "./plot/arrow/arrow_0");
+  if (PlotEnv::isPlotEnabled()) {
+      pe.SaveCellPlotAsJPEG("Nesterov - BeforeStart", true,
+         "cell_0");
+      pe.SaveBinPlotAsJPEG("Nesterov - BeforeStart",
+         "bin_0");
+      pe.SaveArrowPlotAsJPEG("Nesterov - BeforeStart",
+         "arrow_0");
+  }
 #endif
 
   if (graphics_) {
@@ -409,17 +419,17 @@ NesterovPlace::doNesterovPlace() {
   // dynamic adjustment of max_phi_coef
   bool isMaxPhiCoefChanged = false;
 
-  // diverge error handling
-  string divergeMsg = "";
-  int divergeCode = 0;
-
   // snapshot saving detection 
   bool isSnapshotSaved = false;
 
   // snapshot info
   vector<FloatPoint> snapshotCoordi;
+  vector<FloatPoint> snapshotSLPCoordi;
+  vector<FloatPoint> snapshotSLPSumGrads;
   float snapshotA = 0;
   float snapshotDensityPenalty = 0;
+  float snapshotStepLength = 0;
+  float snapshotWlCoefX = 0, snapshotWlCoefY = 0;
 
   bool isDivergeTriedRevert = false;
 
@@ -491,10 +501,10 @@ NesterovPlace::doNesterovPlace() {
      
       debugPrint(log_, GPL, "replace", 3, "np:  NewStepLength: {:g}", newStepLength);
 
-      if( isnan(newStepLength) ) {
-        divergeMsg = "RePlAce divergence detected.";
-        divergeCode = 305;
+      if( isnan(newStepLength) || isinf(newStepLength) ) {
         isDiverged_ = true;
+        divergeMsg_ = "RePlAce diverged at newStepLength.";
+        divergeCode_ = 305;
         break;
       }
 
@@ -545,15 +555,17 @@ NesterovPlace::doNesterovPlace() {
           i+1, sumOverflow_, prevHpwl_);
 
 #ifdef ENABLE_CIMG_LIB
-      pe.SaveCellPlotAsJPEG(string("Nesterov - Iter: " + std::to_string(i+1)), true,
-          string("./plot/cell/cell_") +
-          std::to_string (i+1));
-      pe.SaveBinPlotAsJPEG(string("Nesterov - Iter: " + std::to_string(i+1)),
-          string("./plot/bin/bin_") +
-          std::to_string(i+1));
-      pe.SaveArrowPlotAsJPEG(string("Nesterov - Iter: " + std::to_string(i+1)),
-          string("./plot/arrow/arrow_") +
-          std::to_string(i+1));
+      if (PlotEnv::isPlotEnabled()) {
+        pe.SaveCellPlotAsJPEG(string("Nesterov - Iter: " + std::to_string(i+1)), true,
+            string("cell_") +
+            getZeroFillStr(i+1));
+        pe.SaveBinPlotAsJPEG(string("Nesterov - Iter: " + std::to_string(i+1)),
+            string("bin_") +
+            getZeroFillStr(i+1));
+        pe.SaveArrowPlotAsJPEG(string("Nesterov - Iter: " + std::to_string(i+1)),
+            string("arrow_") +
+            getZeroFillStr(i+1));
+      }
 #endif
     }
 
@@ -593,9 +605,9 @@ NesterovPlace::doNesterovPlace() {
     if( sumOverflow_ < 0.3f 
         && sumOverflow_ - minSumOverflow >= 0.02f
         && hpwlWithMinSumOverflow * 1.2f < prevHpwl_ ) {
-      divergeMsg = "RePlAce divergence detected.\n";
-      divergeMsg += "        Re-run with a smaller max_phi_cof value.";
-      divergeCode = 307;
+      divergeMsg_ = "RePlAce divergence detected. ";
+      divergeMsg_ += "Re-run with a smaller max_phi_cof value.";
+      divergeCode_ = 307;
       isDiverged_ = true;
 
       // revert back to the original rb solutions
@@ -607,12 +619,23 @@ NesterovPlace::doNesterovPlace() {
         rb_->revertGCellSizeToMinRc();
 
         // revert back the current density penality
+        curCoordi_ = snapshotCoordi;
+        curSLPCoordi_ = snapshotSLPCoordi;
+        curSLPSumGrads_ = snapshotSLPSumGrads;
         curA = snapshotA;
-        nb_->updateGCellDensityCenterLocation(snapshotCoordi);
-        init();
         densityPenalty_ 
           = snapshotDensityPenalty;
+        stepLength_ = snapshotStepLength;
+        wireLengthCoefX_ = snapshotWlCoefX;
+        wireLengthCoefY_ = snapshotWlCoefY;
+
+        nb_->updateGCellDensityCenterLocation(curCoordi_);
+        nb_->updateDensityForceBin();
+        nb_->updateWireLengthForceWA(wireLengthCoefX_, wireLengthCoefY_);
+
         isDiverged_ = false;
+        divergeCode_ = 0;
+        divergeMsg_ = "";
         isDivergeTriedRevert = true;
 
         // turn off the RD forcely
@@ -629,8 +652,13 @@ NesterovPlace::doNesterovPlace() {
         && npVars_.routabilityDrivenMode 
         && 0.6 >= sumOverflow_ ) {
       snapshotCoordi = curCoordi_; 
-      snapshotDensityPenalty = densityPenalty_;
+      snapshotSLPCoordi = curSLPCoordi_;
+      snapshotSLPSumGrads = curSLPSumGrads_;
       snapshotA = curA;
+      snapshotDensityPenalty = densityPenalty_;
+      snapshotStepLength = stepLength_;
+      snapshotWlCoefX = wireLengthCoefX_;
+      snapshotWlCoefY = wireLengthCoefY_;
 
       isSnapshotSaved = true;
       log_->report("[NesterovSolve] Snapshot saved at iter = {}", i);
@@ -652,15 +680,24 @@ NesterovPlace::doNesterovPlace() {
         // cutFillerCoordinates();
 
         // revert back the current density penality
+        curCoordi_ = snapshotCoordi;
+        curSLPCoordi_ = snapshotSLPCoordi;
+        curSLPSumGrads_ = snapshotSLPSumGrads;
         curA = snapshotA;
-        nb_->updateGCellDensityCenterLocation(snapshotCoordi);
-        init();
         densityPenalty_ 
           = snapshotDensityPenalty;
+        stepLength_ = snapshotStepLength;
+        wireLengthCoefX_ = snapshotWlCoefX;
+        wireLengthCoefY_ = snapshotWlCoefY;
+
+        nb_->updateGCellDensityCenterLocation(curCoordi_);
+        nb_->updateDensityForceBin();
+        nb_->updateWireLengthForceWA(wireLengthCoefX_, wireLengthCoefY_);
   
         // reset the divergence detect conditions 
         minSumOverflow = 1e30;
         hpwlWithMinSumOverflow = 1e30; 
+        log_->report("[NesterovSolve] Revert back to snapshot coordi");
       }
     }
 
@@ -676,7 +713,7 @@ NesterovPlace::doNesterovPlace() {
   updateDb();
 
   if( isDiverged_ ) { 
-    log_->error(GPL, divergeCode, divergeMsg);
+    log_->error(GPL, divergeCode_, divergeMsg_);
   }
 
   if (graphics_) {
@@ -846,6 +883,13 @@ getSecondNorm(const vector<FloatPoint>& a) {
     norm += coordi.x * coordi.x + coordi.y * coordi.y;
   }
   return sqrt( norm / (2.0*a.size()) ); 
+}
+
+static std::string
+getZeroFillStr(int iterNum) {
+  std::ostringstream str;
+  str << std::setw(4) << std::setfill('0') << iterNum;
+  return str.str();
 }
 
 }

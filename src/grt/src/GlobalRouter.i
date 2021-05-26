@@ -36,7 +36,7 @@
 
 %{
 #include "grt/GlobalRouter.h"
-#include "openroad/OpenRoad.hh"
+#include "ord/OpenRoad.hh"
 #include "sta/Liberty.hh"
 
 namespace ord {
@@ -139,21 +139,10 @@ set_allow_overflow(bool allowOverflow)
 }
 
 void
-set_layer_pitch(int layer, float pitch)
-{
-  getFastRoute()->setLayerPitch(layer, pitch);
-}
-
-void
 set_clock_layer_range(int minLayer, int maxLayer)
 {
   getFastRoute()->setMinLayerForClock(minLayer);
   getFastRoute()->setMaxLayerForClock(maxLayer);
-}
-
-void set_clock_cost(int cost)
-{
-  getFastRoute()->setClockCost(cost);
 }
 
 void

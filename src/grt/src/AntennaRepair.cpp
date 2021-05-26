@@ -57,7 +57,7 @@ AntennaRepair::AntennaRepair(GlobalRouter* grouter,
                              ant::AntennaChecker* arc,
                              dpl::Opendp* opendp,
                              odb::dbDatabase* db,
-                             utl::Logger *logger)
+                             utl::Logger* logger)
     : _grouter(grouter), _arc(arc), _opendp(opendp), _db(db), _logger(logger)
 {
   _block = _db->getChip()->getBlock();
@@ -78,50 +78,53 @@ int AntennaRepair::checkAntennaViolations(NetRouteMap& routing,
     odb::dbNet* db_net = net_route.first;
     GRoute& route = net_route.second;
     odb::dbWire* wire = odb::dbWire::create(db_net);
-    odb::dbWireEncoder wireEncoder;
-    wireEncoder.begin(wire);
-    odb::dbWireType wireType = odb::dbWireType::ROUTED;
-
-    for (GSegment& seg : route) {
-      if (std::abs(seg.initLayer - seg.finalLayer) > 1) {
-        _logger->error(GRT, 68, "Global route segment not valid.");
-      }
-      int x1 = seg.initX;
-      int y1 = seg.initY;
-      int x2 = seg.finalX;
-      int y2 = seg.finalY;
-      int l1 = seg.initLayer;
-      int l2 = seg.finalLayer;
-
-      odb::dbTechLayer* currLayer = tech->findRoutingLayer(l1);
-
-      if (l1 == l2) {  // Add wire
-        if (x1 == x2 && y1 == y2)
-          continue;
-        wireEncoder.newPath(currLayer, wireType);
-        wireEncoder.addPoint(x1, y1);
-        wireEncoder.addPoint(x2, y2);
-      } else {  // Add via
-        int bottomLayer = (l1 < l2) ? l1 : l2;
-        wireEncoder.newPath(currLayer, wireType);
-        wireEncoder.addPoint(x1, y1);
-        wireEncoder.addTechVia(defaultVias[bottomLayer]);
-      }
-    }
-    wireEncoder.end();
-
-    odb::orderWires(db_net, false, false);
-
-    std::vector<ant::VINFO> netViol = _arc->get_net_antenna_violations(
-        db_net,
-        diodeMTerm->getMaster()->getConstName(),
-        diodeMTerm->getConstName());
-    if (!netViol.empty()) {
-      _antennaViolations[db_net] = netViol;
-      _grouter->addDirtyNet(db_net);
-    }
     if (wire != nullptr) {
+      odb::dbWireEncoder wireEncoder;
+      wireEncoder.begin(wire);
+      odb::dbWireType wireType = odb::dbWireType::ROUTED;
+
+      for (GSegment& seg : route) {
+        if (std::abs(seg.initLayer - seg.finalLayer) > 1) {
+          _logger->error(GRT, 68, "Global route segment not valid.");
+        }
+        int x1 = seg.initX;
+        int y1 = seg.initY;
+        int x2 = seg.finalX;
+        int y2 = seg.finalY;
+        int l1 = seg.initLayer;
+        int l2 = seg.finalLayer;
+
+        odb::dbTechLayer* currLayer = tech->findRoutingLayer(l1);
+
+        if (l1 == l2) {  // Add wire
+          if (x1 == x2 && y1 == y2)
+            continue;
+          wireEncoder.newPath(currLayer, wireType);
+          wireEncoder.addPoint(x1, y1);
+          wireEncoder.addPoint(x2, y2);
+        } else {  // Add via
+          int bottomLayer = (l1 < l2) ? l1 : l2;
+          wireEncoder.newPath(currLayer, wireType);
+          wireEncoder.addPoint(x1, y1);
+          wireEncoder.addTechVia(defaultVias[bottomLayer]);
+        }
+      }
+      wireEncoder.end();
+
+      odb::orderWires(db_net, false, false);
+
+      std::vector<ant::VINFO> netViol = _arc->get_net_antenna_violations(
+          db_net,
+          diodeMTerm->getMaster()->getConstName(),
+          diodeMTerm->getConstName());
+      if (!netViol.empty()) {
+        _antennaViolations[db_net] = netViol;
+        _grouter->addDirtyNet(db_net);
+      }
+
       odb::dbWire::destroy(wire);
+    } else {
+      _logger->error(GRT, 221, "Cannot create wire for net {}.", db_net->getConstName());
     }
   }
 
@@ -255,10 +258,10 @@ void AntennaRepair::insertDiode(odb::dbNet* net,
     antennaInst->setLocation(instLocX + offset, instLocY);
 
     odb::dbBox* instBox = antennaInst->getBBox();
-    box box(
-        point(instBox->xMin() - ((leftPad+rightPad) * siteWidth) + 1, instBox->yMin() + 1),
-        point(instBox->xMax() + ((leftPad+rightPad) * siteWidth) - 1,
-              instBox->yMax() - 1));
+    box box(point(instBox->xMin() - ((leftPad + rightPad) * siteWidth) + 1,
+                  instBox->yMin() + 1),
+            point(instBox->xMax() + ((leftPad + rightPad) * siteWidth) - 1,
+                  instBox->yMax() - 1));
     fixedInsts.query(bgi::intersects(box), std::back_inserter(overlapInsts));
 
     odb::Rect coreArea;
@@ -287,8 +290,6 @@ void AntennaRepair::insertDiode(odb::dbNet* net,
 
 void AntennaRepair::getFixedInstances(r_tree& fixedInsts)
 {
-  odb::dbTech* tech = _db->getTech();
-
   int fixedInstId = 0;
   for (odb::dbInst* inst : _block->getInsts()) {
     if (inst->getPlacementStatus() == odb::dbPlacementStatus::FIRM) {

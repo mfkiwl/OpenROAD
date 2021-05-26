@@ -132,6 +132,11 @@ int write_tech_lef(odb::dbTech* tech, const char* path)
   odb::lefout writer;
   return writer.writeTech(tech, path);
 }
+int write_macro_lef(odb::dbLib* lib, const char* path)
+{
+  odb::lefout writer;
+  return writer.writeLib(lib, path);
+}
 
 odb::dbDatabase* read_db(odb::dbDatabase* db, const char* db_path)
 {
@@ -265,4 +270,24 @@ std::vector<odb::Point> getPoints(const Polygon90* polygon)
     pts.emplace_back(odb::Point(pt.x(), pt.y()));
   }
   return pts;
+}
+
+void createSBoxes(odb::dbSWire* swire,
+                  odb::dbTechLayer* layer,
+                  std::vector<odb::Rect> rects,
+                  odb::dbWireShapeType type)
+{
+  for (odb::Rect rect : rects)
+    odb::dbSBox::create(
+        swire, layer, rect.xMin(), rect.yMin(), rect.xMax(), rect.yMax(), type);
+}
+
+void createSBoxes(odb::dbSWire* swire,
+                  odb::dbVia* via,
+                  std::vector<odb::Point> points,
+                  odb::dbWireShapeType type)
+{
+  for (odb::Point point : points)
+    odb::dbSBox::create(
+        swire, via, point.getX(), point.getY(), type);
 }

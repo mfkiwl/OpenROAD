@@ -30,6 +30,8 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
+#include "layoutViewer.h"
+
 #include <QApplication>
 #include <QDebug>
 #include <QFont>
@@ -55,7 +57,6 @@
 #include "dbTransform.h"
 #include "gui/gui.h"
 #include "highlightGroupDialog.h"
-#include "layoutViewer.h"
 #include "mainWindow.h"
 #include "search.h"
 #include "utl/Logger.h"
@@ -108,6 +109,12 @@ class GuiPainter : public Painter
         pixels_per_dbu_(pixels_per_dbu),
         dbu_per_micron_(dbu_per_micron)
   {
+  }
+
+  Color getPenColor() override
+  {
+    QColor color = painter_->pen().color();
+    return Color(color.red(), color.green(), color.blue(), color.alpha());
   }
 
   void setPen(odb::dbTechLayer* layer, bool cosmetic = false) override
@@ -229,11 +236,13 @@ class GuiPainter : public Painter
   int dbu_per_micron_;
 };
 
-LayoutViewer::LayoutViewer(Options* options,
-                           const SelectionSet& selected,
-                           const HighlightSet& highlighted,
-                           const std::vector<QLine>& rulers,
-                           QWidget* parent)
+LayoutViewer::LayoutViewer(
+    Options* options,
+    const SelectionSet& selected,
+    const HighlightSet& highlighted,
+    const std::vector<QLine>& rulers,
+    std::function<Selected(const std::any&)> makeSelected,
+    QWidget* parent)
     : QWidget(parent),
       db_(nullptr),
       options_(options),
@@ -247,6 +256,7 @@ LayoutViewer::LayoutViewer(Options* options,
       max_depth_(99),
       search_init_(false),
       rubber_band_showing_(false),
+      makeSelected_(makeSelected),
       logger_(nullptr),
       layout_context_menu_(new QMenu(tr("Layout Menu"), this))
 {
@@ -366,8 +376,9 @@ Selected LayoutViewer::selectAtPoint(odb::Point pt_dbu)
 
     // Just return the first one
     for (auto iter : shapes) {
-      if (options_->isNetVisible(std::get<2>(iter))) {
-        return Selected(std::get<2>(iter));
+      dbNet* net = std::get<2>(iter);
+      if (options_->isNetVisible(net)) {
+        return makeSelected_(net);
       }
     }
   }
@@ -387,7 +398,7 @@ Selected LayoutViewer::selectAtPoint(odb::Point pt_dbu)
   // Just return the first one
 
   if (insts.begin() != insts.end()) {
-    return Selected(std::get<2>(*insts.begin()));
+    return makeSelected_(std::get<2>(*insts.begin()));
   }
   return Selected();
 }
@@ -742,8 +753,8 @@ void LayoutViewer::drawCongestionMap(Painter& painter, const odb::Rect& bounds)
 
   auto max_congestion_to_show = options_->getMaxCongestionToShow();
 
-  for (auto &[key, cong_data] : gcell_congestion_data) {
-    uint x_idx = key.first;;
+  for (auto& [key, cong_data] : gcell_congestion_data) {
+    uint x_idx = key.first;
     uint y_idx = key.second;
 
     if (x_idx >= x_grid_sz - 1 || y_idx >= y_grid_sz - 1) {
@@ -752,8 +763,8 @@ void LayoutViewer::drawCongestionMap(Painter& painter, const odb::Rect& bounds)
       continue;
     }
 
-
-    auto gcell_rect = odb::Rect(x_grid[x_idx], y_grid[y_idx], x_grid[x_idx+1], y_grid[y_idx+1]);
+    auto gcell_rect = odb::Rect(
+        x_grid[x_idx], y_grid[y_idx], x_grid[x_idx + 1], y_grid[y_idx + 1]);
 
     if (!gcell_rect.intersects(bounds))
       continue;
@@ -810,11 +821,14 @@ void LayoutViewer::drawBlock(QPainter* painter,
                          pixels_per_dbu_,
                          block->getDbUnitsPerMicron());
 
-  // Draw bounds
+  // Draw die area, if set
   painter->setPen(QPen(Qt::gray, 0));
   painter->setBrush(QBrush());
-  Rect bbox = getBounds(block);
-  painter->drawRect(bbox.xMin(), bbox.yMin(), bbox.dx(), bbox.dy());
+  Rect bbox;
+  block->getDieArea(bbox);
+  if (bbox.area() > 0) {
+    painter->drawRect(bbox.xMin(), bbox.yMin(), bbox.dx(), bbox.dy());
+  }
 
   auto inst_range = search_.searchInsts(
       bounds.xMin(), bounds.yMin(), bounds.xMax(), bounds.yMax(), 1 * pixel);
@@ -840,15 +854,20 @@ void LayoutViewer::drawBlock(QPainter* painter,
     // draw bbox
     painter->setPen(QPen(Qt::gray, 0));
     painter->setBrush(QBrush());
-    int master_w = master->getWidth();
-    int master_h = master->getHeight();
-    painter->drawRect(QRect(QPoint(0, 0), QPoint(master_w, master_h)));
+    Rect master_box;
+    master->getPlacementBoundary(master_box);
+    painter->drawRect(
+        master_box.xMin(), master_box.yMin(), master_box.dx(), master_box.dy());
 
     // Draw an orientation tag in corner if useful in size
-    if (master->getHeight() >= 5 * pixel) {
+    int master_h = master->getHeight();
+    if (master_h >= 5 * pixel) {
+      qreal master_w = master->getWidth();
       qreal tag_size = 0.1 * master_h;
-      painter->drawLine(QPointF(std::min(tag_size / 2, (double) master_w), 0.0),
-                        QPointF(0.0, tag_size));
+      qreal tag_x = master_box.xMin() + std::min(tag_size / 2, master_w);
+      qreal tag_y = master_box.yMin() + tag_size;
+      painter->drawLine(QPointF(tag_x, master_box.yMin()),
+                        QPointF(master_box.xMin(), tag_y));
     }
     painter->setTransform(initial_xfm);
   }
@@ -1193,6 +1212,9 @@ void LayoutViewer::fit()
   }
 
   Rect bbox = getBounds(block);
+  if (bbox.xMax() == 0 || bbox.yMax() == 0) {
+    return;
+  }
 
   QSize viewport = scroller_->maximumViewportSize();
   qreal pixels_per_dbu

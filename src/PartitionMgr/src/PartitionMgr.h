@@ -33,15 +33,26 @@
 //
 ///////////////////////////////////////////////////////////////////////////////
 
+#pragma once
+
 #include "HypergraphDecomposition.h"
 
+#include <random>
+#include <set>
 
 namespace odb {
 class dbDatabase;
 class dbChip;
 class dbBlock;
-class dbNet;
 }  // namespace odb
+
+namespace sta {
+class Instance;
+class NetworkReader;
+class Library;
+class Port;
+class Net;
+}  // namespace sta
 
 namespace utl {
 class Logger;
@@ -99,8 +110,11 @@ class PartOptions
   unsigned getBalanceConstraint() const { return _balanceConstraint; }
   void setRefinement(unsigned number) { _refinement = number; }
   unsigned getRefinement() const { return _refinement; }
-  void setSeeds(const std::vector<int>& seeds) { _seeds = seeds; }
-  const std::vector<int>& getSeeds() const { return _seeds; }
+  void setRandomSeed(int seed);
+  void generateSeeds(int seeds);
+  int getNewSeed() { return seedGenerator_(); }
+  void setSeeds(const std::set<int>& seeds) { _seeds = seeds; }
+  const std::set<int>& getSeeds() const { return _seeds; }
   void setExistingID(int id) { _existingId = id; }
   int getExistingID() const { return _existingId; }
   void setPartitionsToTest(const std::vector<int>& partIds)
@@ -150,9 +164,10 @@ class PartOptions
   unsigned _finalPartitions = 2;
   bool _forceGraph = false;
   std::vector<int> _archTopology;
-  std::vector<int> _seeds;
+  std::set<int> _seeds;
   std::vector<int> _partitionsToTest;
   std::string _clusteringScheme = "scheme1";
+  std::mt19937 seedGenerator_ = std::mt19937();
 };
 
 class PartSolutions
@@ -176,8 +191,7 @@ class PartSolutions
   unsigned getClusterId() const { return _clusterId; }
   void setBestSolutionIdx(unsigned idx) { _bestSolutionIdx = idx; }
   unsigned getBestSolutionIdx() const { return _bestSolutionIdx; }
-  void setNumOfRuns(unsigned runs) { _numOfRuns = runs; }
-  unsigned getNumOfRuns() const { return _numOfRuns; }
+  unsigned getNumOfRuns() const { return _seeds.size(); }
   void setBestSetSize(double result) { _bestSetSizeSD = result; }
   double getBestSetSize() const { return _bestSetSizeSD; }
   void setBestSetArea(double result) { _bestSetAreaSD = result; }
@@ -196,6 +210,8 @@ class PartSolutions
   unsigned long getBestRuntime() const { return _bestRuntime; }
   void setBestHopWeigth(unsigned long result) { _bestHopWeigth = result; }
   unsigned long getBestHopWeigth() const { return _bestHopWeigth; }
+
+  void resetEvaluation();
 
  private:
   std::vector<std::vector<unsigned long>> _assignmentResults;
@@ -267,6 +283,17 @@ class PartitionMgr
   void reportNetlistPartitions(unsigned partitionId);
   void readPartitioningFile(std::string filename);
   void reportGraph();
+
+  void writePartitionVerilog(const char* path, const char* port_prefix, const char* module_suffix);
+
+ private:
+  sta::Instance* buildPartitionedInstance(const char* name,
+                                          const char* port_prefix,
+                                          sta::Library* library,
+                                          sta::NetworkReader* network,
+                                          sta::Instance* parent,
+                                          std::set<sta::Instance*>* insts,
+                                          std::map<sta::Net*, sta::Port*>* port_map);
 };
 
 }  // namespace par

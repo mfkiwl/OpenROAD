@@ -43,7 +43,7 @@
 #include "dbShape.h"
 #include "db_sta/dbNetwork.hh"
 #include "db_sta/dbSta.hh"
-#include "openroad/OpenRoad.hh"
+#include "ord/OpenRoad.hh"
 #include "sta/ArcDelayCalc.hh"
 #include "sta/Corner.hh"
 #include "sta/DcalcAnalysisPt.hh"
@@ -144,14 +144,14 @@ QVariant TimingPathsModel::data(const QModelIndex& index, int role) const
   const Column col_index = static_cast<Column>(index.column());
   if (index.isValid() && role == Qt::TextAlignmentRole) {
     switch (col_index) {
-    case Clock:
-    case Start:
-    case End:
-      return Qt::AlignLeft;
-    case Required:
-    case Arrival:
-    case Slack:
-      return Qt::AlignRight;
+      case Clock:
+      case Start:
+      case End:
+        return Qt::AlignLeft;
+      case Required:
+      case Arrival:
+      case Slack:
+        return Qt::AlignRight;
     }
   }
 
@@ -162,7 +162,7 @@ QVariant TimingPathsModel::data(const QModelIndex& index, int role) const
   sta::dbSta* sta = openroad_->getSta();
   auto time_units = sta->search()->units()->timeUnit();
 
-  int row_index = index.row();
+  unsigned int row_index = index.row();
   if (row_index > timing_paths_.size())
     return QVariant();
   auto timing_path = timing_paths_[row_index];
@@ -365,12 +365,15 @@ std::string TimingPath::getEndStageName() const
   return node.getNodeName();
 }
 
-std::string TimingPathNode::getNodeName() const
+std::string TimingPathNode::getNodeName(bool include_master) const
 {
   if (pin_->getObjectType() == odb::dbObjectType::dbITermObj) {
     odb::dbITerm* db_iterm = static_cast<odb::dbITerm*>(pin_);
     return db_iterm->getInst()->getName() + "/"
-           + db_iterm->getMTerm()->getName();
+           + db_iterm->getMTerm()->getName()
+           + (include_master
+                  ? " (" + db_iterm->getInst()->getMaster()->getName() + ")"
+                  : "");
   }
   odb::dbBTerm* db_bterm = static_cast<odb::dbBTerm*>(pin_);
   return db_bterm->getName();
@@ -428,7 +431,7 @@ QVariant TimingPathDetailModel::data(const QModelIndex& index, int role) const
   const auto node = path_->getNodeAt(row_index);
   switch (col_index) {
     case Pin:
-      return QString(node.getNodeName().c_str());
+      return QString(node.getNodeName(/* include_master */ true).c_str());
     case RiseFall:
       return node.is_rising_ ? QString(up_arrow) : QString(down_arrow);
     case Time:
@@ -490,7 +493,6 @@ void TimingPathRenderer::drawObjects(gui::Painter& painter)
 {
   if (!path_)
     return;
-  sta::dbSta* sta = ord::OpenRoad::openRoad()->getSta();
   odb::dbObject* sink_node = nullptr;
   odb::dbNet* net = nullptr;
   int node_count = path_->levelsCount();

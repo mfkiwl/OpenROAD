@@ -125,7 +125,7 @@ frOrientEnum getFrOrient(odb::dbOrientType orient)
     case odb::dbOrientType::MY:
       return frOrientEnum::frcMY;
     case odb::dbOrientType::MYR90:
-      return frOrientEnum::frcMXR90;
+      return frOrientEnum::frcMYR90;
     case odb::dbOrientType::MX:
       return frOrientEnum::frcMX;
     case odb::dbOrientType::MXR90:
@@ -357,12 +357,18 @@ void io::Parser::setVias(odb::dbBlock* block)
   }
 }
 
-void io::Parser::setNDRs(odb::dbDatabase* db)
-{
-  frNonDefaultRule* fnd;
-  unique_ptr<frNonDefaultRule> ptnd;
-  int z;
-  for (auto ndr : db->getTech()->getNonDefaultRules()) {
+void io::Parser::createNDR(odb::dbTechNonDefaultRule* ndr){
+    if (design->tech_->getNondefaultRule(ndr->getName())) {
+      logger->warn(DRT,
+                   0,
+                   "Skipping NDR { } because another rule with the same name "
+                   "already exists\n",
+                   ndr->getName());
+      return;
+    }
+    frNonDefaultRule* fnd;
+    unique_ptr<frNonDefaultRule> ptnd;
+    int z;
     ptnd = make_unique<frNonDefaultRule>();
     fnd = ptnd.get();
     design->tech_->addNDR(std::move(ptnd));
@@ -381,7 +387,7 @@ void io::Parser::setNDRs(odb::dbDatabase* db)
     ndr->getUseVias(vias);
     for (auto via : vias) {
       fnd->addVia(design->getTech()->getVia(via->getName()),
-                  via->getBottomLayer()->getNumber() - 1);
+                  via->getBottomLayer()->getNumber() / 2);
     }
     vector<odb::dbTechViaGenerateRule*> viaRules;
     ndr->getUseViaRules(viaRules);
@@ -396,6 +402,14 @@ void io::Parser::setNDRs(odb::dbDatabase* db)
       }
       fnd->addViaRule(design->getTech()->getViaRule(via->getName()), z);
     }
+}
+void io::Parser::setNDRs(odb::dbDatabase* db)
+{
+  for (auto ndr : db->getTech()->getNonDefaultRules()) {
+      createNDR(ndr);
+  }
+  for (auto ndr : db->getChip()->getBlock()->getNonDefaultRules()) {
+      createNDR(ndr);
   }
 }
 void io::Parser::getSBoxCoords(odb::dbSBox* box,
@@ -983,8 +997,7 @@ void io::Parser::setRoutingLayerProperties(odb::dbTechLayer* layer,
   }
   for (auto rule : layer->getTechLayerSpacingEolRules()) {
     if (rule->isExceptExactWidthValid() || rule->isFillConcaveCornerValid()
-        || rule->isEndPrlSpacingValid() || rule->isEqualRectWidthValid() 
-        || rule->isEncloseCutValid()) {
+        || rule->isEndPrlSpacingValid() || rule->isEqualRectWidthValid()) {
       logger->warn(utl::DRT,
                    168,
                    "unsupported LEF58_SPACING rule for layer {}",
@@ -1063,6 +1076,14 @@ void io::Parser::setRoutingLayerProperties(odb::dbTechLayer* layer,
         len->setLength(false, rule->getMinLength(), rule->isTwoEdgesValid());
       else
         len->setLength(true, rule->getMaxLength(), rule->isTwoEdgesValid());
+    }
+    if (rule->isEncloseCutValid()) {
+      auto enc = make_shared<frLef58SpacingEndOfLineWithinEncloseCutConstraint>(
+          rule->getEncloseDist(), rule->getCutToMetalSpace());
+      within->setEncloseCutConstraint(enc);
+      enc->setAbove(rule->isAboveValid());
+      enc->setBelow(rule->isBelowValid());
+      enc->setAllCuts(rule->isAllCutsValid());
     }
     tech->addConstraint(con);
     tmpLayer->lef58SpacingEndOfLineConstraints.push_back(con);
@@ -1359,6 +1380,8 @@ void io::Parser::addDefaultCutLayer()
 
 void io::Parser::addRoutingLayer(odb::dbTechLayer* layer)
 {
+  if (layer->getLef58Type() == odb::dbTechLayer::LEF58_TYPE::MIMCAP)
+    return;
   if (readLayerCnt == 0) {
     addDefaultMasterSliceLayer();
     addDefaultCutLayer();
@@ -1390,6 +1413,7 @@ void io::Parser::addRoutingLayer(odb::dbTechLayer* layer)
     tmpLayer->setDir(frcVertPrefRoutingDir);
 
   tmpLayer->setPitch(layer->getPitch());
+  tmpLayer->setNumMasks(layer->getNumMasks());
 
   // Add off grid rule for every layer
   auto recheckConstraint = make_unique<frRecheckConstraint>();
@@ -1543,7 +1567,23 @@ void io::Parser::addRoutingLayer(odb::dbTechLayer* layer)
       tmpLayer->setMinSpacing(rptr);
     }
   }
-
+  if (!layer->getV55InfluenceEntries().empty()) {
+    frCollection<frCoord> widthTbl;
+    frCollection<std::pair<frCoord, frCoord>> valTbl;
+    for (auto entry : layer->getV55InfluenceEntries()) {
+      frUInt4 width, within, spacing;
+      entry->getV55InfluenceEntry(width, within, spacing);
+      widthTbl.push_back(width);
+      valTbl.push_back({within, spacing});
+    }
+    fr1DLookupTbl<frCoord, std::pair<frCoord, frCoord>> tbl(
+        "WIDTH", widthTbl, valTbl);
+    unique_ptr<frConstraint> uCon
+        = make_unique<frSpacingTableInfluenceConstraint>(tbl);
+    auto rptr = static_cast<frSpacingTableInfluenceConstraint*>(uCon.get());
+    tech->addUConstraint(std::move(uCon));
+    tmpLayer->setSpacingTableInfluence(rptr);
+  }
   // read prl spacingTable
   if (layer->hasV55SpacingRules()) {
     frCollection<frUInt4> _rowVals, _colVals;
@@ -1590,24 +1630,15 @@ void io::Parser::addRoutingLayer(odb::dbTechLayer* layer)
       for (size_t j = 0; j < _tblVals[i].size(); j++)
         tblVals[i].push_back(_tblVals[i][j]);
 
-    frCoord defaultPrl = -abs(tblVals[0][0]);
-
-    frCollection<frSpacingTableTwRowType> rowVals, colVals;
-    frString rowName("WIDTH1PRL"), colName("WIDTH2PRL");
-
+    frCollection<frSpacingTableTwRowType> rowVals;
     for (uint j = 0; j < layer->getTwoWidthsSpacingTableNumWidths(); ++j) {
       frCoord width = layer->getTwoWidthsSpacingTableWidth(j);
-      frCoord prl = defaultPrl;
-
-      if (layer->getTwoWidthsSpacingTableHasPRL(j)) {
-        prl = layer->getTwoWidthsSpacingTablePRL(j);
-        defaultPrl = prl;
-      }
-      colVals.push_back(frSpacingTableTwRowType(width, prl));
+      frCoord prl = layer->getTwoWidthsSpacingTablePRL(j);
       rowVals.push_back(frSpacingTableTwRowType(width, prl));
     }
-    unique_ptr<frConstraint> uCon = make_unique<frSpacingTableTwConstraint>(
-        fr2DLookupTbl(rowName, rowVals, colName, colVals, tblVals));
+
+    unique_ptr<frConstraint> uCon
+        = make_unique<frSpacingTableTwConstraint>(rowVals, tblVals);
     auto rptr = static_cast<frSpacingTableTwConstraint*>(uCon.get());
     tech->addUConstraint(std::move(uCon));
     if (tmpLayer->getMinSpacing())
@@ -1639,6 +1670,8 @@ void io::Parser::addRoutingLayer(odb::dbTechLayer* layer)
 
 void io::Parser::addCutLayer(odb::dbTechLayer* layer)
 {
+  if (layer->getLef58Type() == odb::dbTechLayer::LEF58_TYPE::MIMCAP)
+    return;
   if (readLayerCnt == 0)
     addDefaultMasterSliceLayer();
 
@@ -1933,6 +1966,7 @@ void io::Parser::setMacros(odb::dbDatabase* db)
           layerNum = tech->name2layer.at(layer)->getLayerNum();
         auto blkIn = make_unique<frBlockage>();
         blkIn->setId(numBlockages);
+        blkIn->setDesignRuleWidth(obs->getDesignRuleWidth());
         numBlockages++;
         auto pinIn = make_unique<frPin>();
         pinIn->setId(0);
@@ -2077,13 +2111,23 @@ void io::Parser::setTechVias(odb::dbTech* _tech)
 {
   for (auto via : _tech->getVias()) {
     map<frLayerNum, int> lNum2Int;
+    bool has_unknown_layer = false;
     for (auto box : via->getBoxes()) {
       string layerName = box->getTechLayer()->getName();
-      if (tech->name2layer.find(layerName) == tech->name2layer.end())
-        logger->error(
-            DRT, 124, "unknown layer {} for via {}", layerName, via->getName());
+      if (tech->name2layer.find(layerName) == tech->name2layer.end()) {
+        logger->warn(DRT,
+                     124,
+                     "via {} with unused layer {} will be ignored",
+                     layerName,
+                     via->getName());
+        has_unknown_layer = true;
+        continue;
+      }
       frLayerNum lNum = tech->name2layer[layerName]->getLayerNum();
       lNum2Int[lNum] = 1;
+    }
+    if (has_unknown_layer) {
+      continue;
     }
     if (lNum2Int.size() != 3)
       logger->error(DRT, 125, "unsupported via {}", via->getName());
@@ -2304,8 +2348,6 @@ void io::Parser::readGuide()
 
 void io::Writer::fillConnFigs_net(frNet* net, bool isTA)
 {
-  // bool enableOutput = true;
-  bool enableOutput = false;
   auto netName = net->getName();
   if (isTA) {
     for (auto& uGuide : net->getGuides()) {
@@ -2319,27 +2361,20 @@ void io::Writer::fillConnFigs_net(frNet* net, bool isTA)
           connFigs[netName].push_back(
               make_shared<frVia>(*static_cast<frVia*>(connFig)));
         } else {
-          cout << "Error: io::Writer::filliConnFigs does not support this type"
-               << endl;
+          logger->warn(
+              DRT,
+              247,
+              "io::Writer::fillConnFigs_net does not support this type");
         }
       }
     }
   } else {
-    if (enableOutput) {
-      cout << netName << ":\n";
-    }
     for (auto& shape : net->getShapes()) {
       if (shape->typeId() == frcPathSeg) {
         auto pathSeg = *static_cast<frPathSeg*>(shape.get());
         frPoint start, end;
         pathSeg.getPoints(start, end);
 
-        if (enableOutput) {
-          frLayerNum currLayerNum = pathSeg.getLayerNum();
-          cout << "  connfig pathseg (" << start.x() / 2000.0 << ", "
-               << start.y() / 2000.0 << ") - (" << end.x() / 2000.0 << ", "
-               << end.y() / 2000.0 << ") " << currLayerNum << "\n";
-        }
         connFigs[netName].push_back(make_shared<frPathSeg>(pathSeg));
       }
     }

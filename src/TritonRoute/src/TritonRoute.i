@@ -35,7 +35,7 @@
 
 %{
 
-#include "openroad/OpenRoad.hh"
+#include "ord/OpenRoad.hh"
 #include "triton_route/TritonRoute.h"
  
 %}
@@ -48,6 +48,39 @@ int detailed_route_num_drvs()
 {
   auto* router = ord::OpenRoad::openRoad()->getTritonRoute();
   return router->getNumDRVs();
+}
+
+void detailed_route_cmd(const char* guideFile,
+                        const char* outputGuideFile,
+                        const char* outputMazeFile,
+                        const char* outputDrcFile,
+                        const char* outputCmapFile,
+                        const char* dbProcessNode,
+                        int drouteEndIter,
+                        int drouteViaInPinBottomLayerNum,
+                        int drouteViaInPinTopLayerNum,
+                        int orSeed,
+                        double orK,
+                        const char* bottomRoutingLayer,
+                        const char* topRoutingLayer,
+                        int verbose)
+{
+  auto* router = ord::OpenRoad::openRoad()->getTritonRoute();
+  router->setParams({guideFile,
+                    outputGuideFile,
+                    outputMazeFile,
+                    outputDrcFile,
+                    outputCmapFile,
+                    dbProcessNode,
+                    drouteEndIter,
+                    drouteViaInPinBottomLayerNum,
+                    drouteViaInPinTopLayerNum,
+                    orSeed,
+                    orK,
+                    bottomRoutingLayer,
+                    topRoutingLayer,
+                    verbose});
+  router->main();
 }
 
 void detailed_route_cmd(const char* param_file)

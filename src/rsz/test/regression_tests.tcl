@@ -1,14 +1,16 @@
 record_tests {
-  make_parasitics1
-  make_parasitics2
-  make_parasitics3
-  make_parasitics4
-  make_parasitics5
   buffer_ports1
   buffer_ports3
   buffer_ports4
   buffer_ports5
   buffer_ports6
+  fanin_fanout1
+  make_parasitics1
+  make_parasitics2
+  make_parasitics3
+  make_parasitics4
+  make_parasitics5
+  make_parasitics6
   resize1
   resize2
   resize3
@@ -18,6 +20,7 @@ record_tests {
   resize_slack1
   resize_slack2
   remove_buffers1
+  remove_buffers2
   repair_clk_nets1
   repair_clk_inverters1
   repair_cap1
@@ -61,6 +64,7 @@ record_tests {
   repair_wire5
   repair_wire6
   repair_wire7
+  repair_wire8
   gcd_resize
 }
 

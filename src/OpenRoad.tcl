@@ -58,29 +58,34 @@ proc read_lef { args } {
   ord::read_lef_cmd $filename $lib_name $make_tech $make_lib
 }
 
-sta::define_cmd_args "read_def" {[-floorplan_initialize|-incremental] [-order_wires] [-continue_on_errors] filename}
+sta::define_cmd_args "read_def" {[-floorplan_initialize|-incremental]\
+                                   [-continue_on_errors]\
+                                   filename}
 
 proc read_def { args } {
-  sta::parse_key_args "read_def" args keys {} flags {-floorplan_initialize -incremental -order_wires -continue_on_errors}
+  sta::parse_key_args "read_def" args keys {} flags {-floorplan_initialize -incremental\
+                                                       -order_wires -continue_on_errors}
   sta::check_argc_eq1 "read_def" $args
   set filename [file nativename [lindex $args 0]]
   if { ![file exists $filename] } {
     utl::error "ORD" 3 "$filename does not exist."
   }
-  if { ![file readable $filename] } {
+  if { ![file readable $filename] || ![file isfile $filename] } {
     utl::error "ORD" 4 "$filename is not readable."
   }
   if { ![ord::db_has_tech] } {
     utl::error "ORD" 5 "no technology has been read."
   }
-  set order_wires [info exists flags(-order_wires)]
+  if { [info exists flags(-order_wires)] } {
+    utl::warn "ORD" 33 "-order_wires is deprecated."
+  }
   set continue_on_errors [info exists flags(-continue_on_errors)]
   set floorplan_init [info exists flags(-floorplan_initialize)]
   set incremental [info exists flags(-incremental)]
   if { $floorplan_init && $incremental } {
     utl::error ORD 16 "incremental and floorplan_initialization options are both set. At most one should be used."
   }
-  ord::read_def_cmd $filename $order_wires $continue_on_errors $floorplan_init $incremental
+  ord::read_def_cmd $filename $continue_on_errors $floorplan_init $incremental
 }
 
 sta::define_cmd_args "write_def" {[-version version] filename}
@@ -140,76 +145,32 @@ proc write_db { args } {
   ord::write_db_cmd $filename
 }
 
-# Units are from OpenSTA (ie Liberty file or set_cmd_units).
-sta::define_cmd_args "set_layer_rc" { [-layer layer] \
-					[-via via_layer] \
-					[-capacitance cap] \
-					[-resistance res] }
-proc set_layer_rc {args} {
-  sta::parse_key_args "set_layer_rc" args \
-    keys {-layer -via -capacitance -resistance}\
-    flags {}
+sta::define_cmd_args "assign_ndr" { -ndr name (-net name | -all_clocks) }
 
-  if { ![info exists keys(-layer)] && ![info exists keys(-via)] } {
-    utl::error "ORD" 9 "layer or via must be specified."
+proc assign_ndr { args } {
+  sta::parse_key_args "assign_ndr" args keys {-ndr -net} flags {-all_clocks}
+  if { ![info exists keys(-ndr)] } {
+    utl::error ORD 1009 "-name is missing"
   }
-
-  if { [info exists keys(-layer)] && [info exists keys(-via)] } {
-    utl::error "ORD" 10 "Exactly one of layer or via must be specified."
+  if { ! ([info exists keys(-net)] ^ [info exists flags(-all_clocks)]) } {
+    utl::error ORD 1010 "Either -net or -all_clocks need to be defined"
   }
-
-  set tech [ord::get_db_tech]
-
-  if { [info exists keys(-layer)] } {
-    set techLayer [$tech findLayer $keys(-layer)]
+  set block [[[ord::get_db] getChip] getBlock]
+  set ndrName $keys(-ndr)
+  set ndr [$block findNonDefaultRule $ndrName]
+  if { $ndr == "NULL" } {
+    utl::error ORD 1011 "No NDR named ${ndrName} found"
+  }
+  if { [info exists keys(-net)] } {
+    set netName $keys(-net)
+    set net [$block findNet $netName]
+    if { $net == "NULL" } {
+      utl::error ORD 1012 "No net named ${netName} found"
+    }
+    $net setNonDefaultRule $ndr
   } else {
-    set techLayer [$tech findLayer $keys(-via)]
-  }
-  if { $techLayer == "NULL" } {
-    utl::error "ORD" 16 "layer not found."
-  }
-
-  if { ![info exists keys(-capacitance)] && ![info exists keys(-resistance)] } {
-    utl::error "ORD" 12 "use -capacitance <value> or -resistance <value>."
-  }
-
-  if { [info exists keys(-via)] } {
-    set viaTechLayer [$techLayer getUpperLayer]
-
-    if { [info exists keys(-capacitance)] } {
-      set wire_cap [capacitance_ui_sta $keys(-capacitance)]
-      $viaTechLayer setCapacitance $wire_cap
-    }
-
-    if { [info exists keys(-resistance)] } {
-      set wire_res [resistance_ui_sta $keys(-resistance)]
-      $viaTechLayer setResistance $wire_res
-    }
-  } else {
-    if { [info exists keys(-capacitance)] } {
-      # Zero the edge cap and just use the user given value
-      $techLayer setEdgeCapacitance 0
-      # The DB stores capacitance per square micron of area, not per
-      # micron of length.
-      set wire_width [ord::dbu_to_microns [$techLayer getWidth]]
-      set wire_cap [expr [sta::capacitance_ui_sta $keys(-capacitance)] \
-                      / [sta::distance_ui_sta 1.0]]
-      # ui_sta converts to F/m so multiple by 1E6 to get pF/um
-      set cap_per_square [expr 1E6 * $wire_cap / $wire_width]
-      
-      $techLayer setCapacitance $cap_per_square
-    }
-    
-    if { [info exists keys(-resistance)] } {
-      # The DB stores resistance for a square of wire,
-      # not unit resistance.
-      set wire_width [ord::dbu_to_microns [$techLayer getWidth]]
-      set wire_res [expr [sta::resistance_ui_sta $keys(-resistance)] \
-                      / [sta::distance_ui_sta 1.0]]
-      # ui_sta converts to ohm/m so multiple by 1E-6 to get ohm/um
-      set res_per_square [expr 1e-6 * $wire_width * $wire_res]
-      
-      $techLayer setResistance $res_per_square
+    foreach net [sta::find_all_clk_nets] {
+      $net setNonDefaultRule $ndr
     }
   }
 }
@@ -227,33 +188,61 @@ proc python {args} {
   ord::python_cmd $args
 }
 
+proc set_thread_count { count } {
+  ord::set_thread_count $count
+}
+
+proc thread_count { } {
+  return [ord::thread_count]
+}
+
 ################################################################
 
 namespace eval ord {
-
-proc ensure_units_initialized { } {
-  if { ![units_initialized] } {
-    utl::error "ORD" 13 "command units uninitialized. Use the read_liberty or set_cmd_units command to set units."
-  }
-}
-
-proc clear {} {
-  sta::clear_network
-  sta::clear_sta
-  grt::clear_fastroute
-  [get_db] clear
-}
   
-proc profile_cmd {filename args} {
-  utl::info 99 "Profiling $args > $filename"
-  profile -commands on
-  if {[catch "{*}$args"]} {
-    global errorInfo
-    puts $errorInfo
+  proc ensure_units_initialized { } {
+    if { ![units_initialized] } {
+      utl::error "ORD" 13 "command units uninitialized. Use the read_liberty or set_cmd_units command to set units."
+    }
   }
-  profile off profarray
-  profrep profarray cpu $filename
-}
-
-# namespace ord
+  
+  proc clear {} {
+    sta::clear_network
+    sta::clear_sta
+    grt::clear_fastroute
+    [get_db] clear
+  }
+  
+  proc profile_cmd {filename args} {
+    utl::info 99 "Profiling $args > $filename"
+    profile -commands on
+    if {[catch "{*}$args"]} {
+      global errorInfo
+      puts $errorInfo
+    }
+    profile off profarray
+    profrep profarray cpu $filename
+  }
+  
+  proc get_die_area { } {
+    set area {}
+    set rect [[ord::get_db_block] getDieArea]
+    lappend area [ord::dbu_to_microns [$rect xMin]]
+    lappend area [ord::dbu_to_microns [$rect yMin]]
+    lappend area [ord::dbu_to_microns [$rect xMax]]
+    lappend area [ord::dbu_to_microns [$rect yMax]]
+    return $area
+  }
+  
+  proc get_core_area { } {
+    set area {}
+    set rect [[ord::get_db_block] getCoreArea]
+    lappend area [ord::dbu_to_microns [$rect xMin]]
+    lappend area [ord::dbu_to_microns [$rect yMin]]
+    lappend area [ord::dbu_to_microns [$rect xMax]]
+    lappend area [ord::dbu_to_microns [$rect yMax]]
+    return $area
+  }
+  
+    # namespace ord
 }

@@ -5,6 +5,7 @@
 OpenROAD is an integrated chip physical design tool that takes a
 design from synthesized Verilog to routed layout.  
 
+
 An outline of steps used to build a chip using OpenROAD are shown below.
 
 * Initialize floorplan - define the chip size and cell rows
@@ -23,12 +24,14 @@ An outline of steps used to build a chip using OpenROAD are shown below.
 
 OpenROAD uses the OpenDB database and OpenSTA for static timing analysis.
 
+
 ## Install dependencies
 
 The `etc/DependencyInstaller.sh`  script supports Centos7 and Ubuntu 20.04.
 You need root access to correctly install the dependencies with the script.
 
-The OpenROAD build requires the following packages:
+
+## Install dependencies
 
 Tools
   * cmake 3.14
@@ -38,7 +41,7 @@ Tools
   * swig 4.0
 
 Libraries
-  * boost 1.68
+  * boost 1.68 (1.75 will not compile)
   * tcl 8.6
   * zlibc
   * eigen3
@@ -47,6 +50,9 @@ Libraries
   * qt5
   * cimg (optional for replace)
 
+
+For a limited number of configurations the following script can be used to install
+dependencies.
 ```
 ./etc/DependencyInstaller.sh -dev
 ```
@@ -128,6 +134,7 @@ openroad
   -version           show version and exit
   -no_init           do not read .openroad init file
   -no_splash         do not show the license splash at startup
+  -threads count|max number of threads to use
   -exit              exit after reading cmd_file
   cmd_file           source cmd_file
 ```
@@ -292,9 +299,9 @@ place_pins [-hor_layers h_layers]
            [-min_distance distance]
 ```
 - ``-hor_layers`` (mandatory). Specify the layers to create the metal shapes 
-of pins placed in horizontal tracks. Can be a single layer or a list of layer indices.
+of pins placed in horizontal tracks. Can be a single layer or a list of layer names.
 - ``-ver_layers`` (mandatory). Specify the layers to create the metal shapes
-of pins placed in vertical tracks. Can be a single layer or a list of layer indices.
+of pins placed in vertical tracks. Can be a single layer or a list of layer names.
 - ``-random_seed``. Specify the seed for random operations.
 - ``-exclude``. Specify an interval in one of the four edges of the die boundary
 where pins cannot be placed. Can be used multiple times.
@@ -306,9 +313,40 @@ random.
 
 The `exclude` option syntax is `-exclude edge:interval`. The `edge` values are
 (top|bottom|left|right). The `interval` can be the whole edge, with the `*` value,
-or a range of values. Example: `place_pins -hor_layers 2 -ver_layers 3 -exclude top:* -exclude right:15-60.5 -exclude left:*-50`.
+or a range of values. Example: `place_pins -hor_layers metal2 -ver_layers metal3 -exclude top:* -exclude right:15-60.5 -exclude left:*-50`.
 In the example, three intervals were excluded: the whole top edge, the right edge from 15 microns to 60.5 microns, and the
 left edge from the beginning to the 50 microns.
+
+```
+place_pin [-pin_name pin_name]
+          [-layer layer]
+          [-location {x y}]
+          [-pin_size {width height}]
+```
+
+The `place_pin` command places a specific pin in the specified location, with the specified size.
+The `-pin_name` option is the name of a pin of the design.
+The `-layer` defines the routing layer where the pin is placed.
+The `-location` defines the center of the pin.
+The `-pin_size` option defines the width and height of the pin.
+
+```
+define_pin_shape_pattern [-layer layer]
+                         [-x_step x_step]
+                         [-y_step y_step]
+                         [-region {llx lly urx ury}]
+                         [-size {width height}]
+                         [-pin_keepout dist]
+```
+
+The `define_pin_shape_pattern` command defines a pin placement grid at the specified layer.
+This grid has positions inside the die area, not only at the edges of the die boundary.
+The `-layer` option defines a single top most routing layer of the placement grid.
+The `-region` option defines the {llx, lly, urx, ury} region of the placement grid.
+The `-x_step` and `-y_step` options define the distance between each valid position on the grid.
+The `-size` option defines the width and height of the pins assigned to this grid. The center of the
+pins are placed on the grid positions. Pins may have half of their shapes outside the defined region.
+The `-pin_keepout` option defines the boundary (microns) around existing routing obstructions the pins should avoid, defaults to the `layer` minimum spacing.
 
 ```
 set_io_pin_constraint -direction direction -pin_names names -region edge:interval
@@ -316,8 +354,15 @@ set_io_pin_constraint -direction direction -pin_names names -region edge:interva
 
 The `set_io_pin_constraint` command sets region constraints for pins according the direction or the pin name.
 This command can be called multiple times with different constraints. Only one condition should be used for each
-command call. The `-direction` argument is the pin direction defined in DEF file (input, output, inout, and feedthru).
+command call. The `-direction` argument is the pin direction (input, output, inout, or feedthru).
 The `-pin_names` argument is a list of names. The `-region` syntax is the same as the `-exclude` syntax.
+To restrict pins to the positions defined with `define_pin_shape_pattern`, use `-region up:{llx lly urx ury}` or `-region up:*`.
+
+```
+clear_io_pin_constraints
+```
+
+The `clear_io_pin_constraints` command clear all the previous defined constraints and pin shape pattern for top layer placement.
 
 #### Tapcell
 
@@ -435,7 +480,7 @@ set_placement_padding -global|-instances insts|-masters masters
                       [-left pad_left] [-right pad_right]
 detailed_placement [-max_displacement rows]
 check_placement [-verbose]
-filler_placement filler_masters
+filler_placement [-prefix prefix] filler_masters
 optimimize_mirroring
 ```
 
@@ -458,6 +503,7 @@ The `filler_placement` command fills gaps between detail placed instances
 to connect the power and ground rails in the rows. `filler_masters` is
 a list of master/macro names to use for filling the gaps. Wildcard matching
 is supported, so `FILL*` will match `FILLCELL_X1 FILLCELL_X16 FILLCELL_X2 FILLCELL_X32 FILLCELL_X4 FILLCELL_X8`.
+To specify a different naming prefix from `FILLER_` use `-prefix <new prefix>`.
 
 The `optimimize_mirroring` command mirrors instances about the Y axis
 in vane attempt to minimize the total wire length (hpwl).
@@ -472,7 +518,7 @@ The resizer stops and reports and error if the max utilization is exceeded.
 ```
 set_wire_rc [-clock] [-signal]
             [-layer layer_name]
-            [-resistance res ]
+            [-resistance res]
             [-capacitance cap]
 ```
 
@@ -491,21 +537,25 @@ capacitance_unit/distance_unit (typically pf/micron or ff/micron).  If
 distance units are not specified in the liberty file microns are
 used.
 
-The resistance and capacitance values in the OpenROAD database can be
-changed using the `set_layer_rc` command. This is useful if they are
-not in the LEF file or to override the values in the LEF.
+The `set_layer_rc` command can be used to set the resistance and
+capacitance for a layer or via. This is useful if they are missing
+from the LEF file or to override the values in the LEF.
 
 ```
 set_layer_rc [-layer layer]
              [-via via_layer]
              [-capacitance cap]
-             [-resistance res] }
+             [-resistance res]
+             [-corner corner]
 ```
 
-The units for capacitance are from the first Liberty file read.
-For example, usually pF/um^2 or fF/um^2 for capacitance and
-kohms/square or ohms/square for resistance. Via resistances are
-specified with the `via` keyword.
+For layers the resistance and capacitance units are the same as
+`set_wire_rc` (per length of minimum width wire). `layer` must be the
+name of a routing layer.
+
+Via resistance can also be set with the `set_layer_rc` command with the -via keyword.
+`-capacitance` is not supported for vias. `via_layer` is the name of a via layer.
+Via resistance is per cut/via, not area based.
 
 ```
 remove_buffers
@@ -609,13 +659,10 @@ report_floating_nets [-verbose]
 The `report_floating_nets` command reports nets with only one pin connection.
 Use the `-verbose` flag to see the net names.
 
-A typical resizer command file is shown below.
+A typical resizer command file (after a design and liberty libraries
+have been read) is shown below.
 
 ```
-# resizer/test/gcd_resize.tcl
-read_liberty Nangate_typ.lib
-read_lef Nangate.lef
-read_def gcd_placed.def
 read_sdc gcd.sdc
 
 set_wire_rc -layer metal2
@@ -675,11 +722,7 @@ be optionally controlled by parameters specified to configure_cts_characterizati
 Use set_wire_rc command to set clock routing layer.
 
 ```
-read_lef "mylef.lef"
-read_liberty "myliberty.lib"
-read_def "mydef.def"
-read_verilog "myverilog.v"
-read_sdc "mysdc.sdc"
+read_sdc "design.sdc"
 set_wire_rc -clock -layer metal5
 
 configure_cts_characterization [-max_slew <max_slew>] \
@@ -736,15 +779,6 @@ Another command available from TritonCTS is ``report_cts``. It is used to extrac
 The following tcl snippet shows how to call ``report_cts``.
 
 ```
-read_lef "mylef.lef"
-read_liberty "myliberty.lib"
-read_def "mydef.def"
-read_verilog "myverilog.v"
-read_sdc "mysdc.sdc"
-
-set_wire_rc -clock -layer metal5
-report_checks
-
 clock_tree_synthesis -root_buf "BUF_X4" \
                      -buf_list "BUF_X4" \
                      -wire_unit 20 
@@ -760,39 +794,26 @@ Global router options and commands are described below.
 
 ```
 global_route [-guide_file out_file] \
-             [-tile_size tile_size] \
              [-verbose verbose] \
              [-overflow_iterations iterations] \
              [-grid_origin {x y}] \
-             [-report_congestion congest_file] \
-             [-clock_pdrev_fanout fanout] \
-             [-clock_topology_priority priority] \
-             [-clock_tracks_cost clock_tracks_cost] \
              [-allow_overflow]
 
 ```
-
 Options description:
 - **guide_file**: Set the output guides file name (e.g.: -guide_file route.guide")
-- **tile_size**: Set the number of pitches inside a GCell (e.g.: -tile_size *20*)
 - **verbose**: Set verbose of report. 0 for less verbose, 1 for medium verbose, 2 for full verbose (e.g.: -verbose *1*)
 - **overflow_iterations**: Set the number of iterations to remove the overflow of the routing (e.g.: -overflow_iterations *50*)
 - **grid_origin**: Set the origin of the routing grid (e.g.: -grid_origin {1 1})
-- **report_congestion**: Create a text file with the congestion report of the GCells (e.g.: -report_congestion "congest")
-- **clock_pdrev_fanout**: Set the minimum fanout to use PDRev for the routing topology construction of the clock nets (e.g.: -clock_pdrev_fanout 5)
-- **clock_topology_priority**: Set the PDRev routing topology construction priority for clock nets.
-See `set_pdrev_topology_priority` command description for more details about PDRev and topology priority (e.g.: -topology_priority 0.6)
-- **clock_tracks_cost**: Set the routing tracks consumption by clock nets
 - **allow_overflow**: Allow global routing results with overflow
 
 ```
-set_layer_ranges [-layers min-max] \
-                 [-clock_layers min-max]
+set_routing_layers [-signal min-max] \
+                   [-clock min-max]
 ```
-
-The `set_layer_ranges` command sets the minimum and maximum routing layers for signal nets, with the `-layers` option,
-and the the minimum and maximum routing layers for clock nets, with the `-clock_layers` option
-Example: `set_layer_ranges -layers 2-10 -clock_layers 6-9`
+The `set_routing_layers` command sets the minimum and maximum routing layers for signal nets, with the `-signal` option,
+and the the minimum and maximum routing layers for clock nets, with the `-clock` option
+Example: `set_routing_layers -signal Metal2-Metal10 -clock Metal6-Metal9`
 
 ```
 set_macro_extension extension
@@ -803,21 +824,30 @@ Example: `set_macro_extension 2`
 ```
 set_global_routing_layer_adjustment layer adjustment
 ```
-
 The `set_global_routing_layer_adjustment` command sets routing resources adjustments in the routing layers of the design.
-You can set adjustment for a specific layer, e.g.: `set_global_routing_layer_adjustment 4 0.5` reduces the routing resources
-of routing layer 4 in 50%.
+You can set adjustment for a specific layer, e.g.: `set_global_routing_layer_adjustment Metal4 0.5` reduces the routing resources
+of routing layer Metal4 in 50%.
 You can set adjustment for all layers at once using `*`, e.g.: `set_global_routing_layer_adjustment * 0.3` reduces
 the routing resources of all routing layers in 30%.
-You can set adjustment for a layer range, e.g.: `set_global_routing_layer_adjustment 4-8 0.3` reduces
-the routing resources of routing layers  4, 5, 6 7 and 8 in 30%.
+You can set adjustment for a layer range, e.g.: `set_global_routing_layer_adjustment Metal4-Metal8 0.3` reduces
+the routing resources of routing layers  Metal4, Metal5, Metal6, Metal7 and Metal8 in 30%.
 
 ```
 set_global_routing_layer_pitch layer pitch
 ```
 The `set_global_routing_layer_pitch` command sets the pitch for routing tracks in a specific layer.
 You can call it multiple times for different layers.
-Example: `set_global_routing_layer_pitch 6 1.34`.
+Example: `set_global_routing_layer_pitch Metal6 1.34`.
+
+```
+set_clock_routing [-clock_pdrev_fanout fanout] \
+                  [-clock_topology_priority priority]
+```
+The `set_clock_routing` command sets specific configurations for clock nets.
+Options description:
+- **clock_pdrev_fanout**: Set the minimum fanout to use PDRev for the routing topology construction of the clock nets (e.g.: -clock_pdrev_fanout 5)
+- **clock_topology_priority**: Set the PDRev routing topology construction priority for clock nets.
+See `set_pdrev_topology_priority` command description for more details about PDRev and topology priority (e.g.: -topology_priority 0.6)
 
 ```
 set_pdrev_topology_priority netName alpha
@@ -838,7 +868,7 @@ set_global_routing_region_adjustment {lower_left_x lower_left_y upper_right_x up
 The `set_global_routing_region_adjustment` command sets routing resources adjustments in a specific region of the design.
 The region is defined as a rectangle in a routing layer.
 Example: `set_global_routing_region_adjustment {1.5 2 20 30.5}
-                                               -layer 4 -adjustment 0.7`
+                                               -layer Metal4 -adjustment 0.7`
 
 ```
 repair_antennas diodeCellName/diodePinName
@@ -902,3 +932,13 @@ Options description:
   the voltage value is obtained from operating conditions in the liberty.
 
 ###### Note: See the file [Vsrc_aes.loc file](https://github.com/The-OpenROAD-Project/PDNSim/blob/master/test/aes/Vsrc.loc) for an example with a description specified [here](https://github.com/The-OpenROAD-Project/PDNSim/blob/master/doc/Vsrc_description.md).
+
+#### TCL functions
+
+Get the die and core areas as a list in microns: "llx lly urx ury"
+
+```
+ord::get_die_area
+ord::get_core_area
+```
+

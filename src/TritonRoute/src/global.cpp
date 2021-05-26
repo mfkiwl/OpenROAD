@@ -27,6 +27,9 @@
  */
 
 #include "global.h"
+#include "db/drObj/drFig.h"
+#include "db/drObj/drShape.h"
+#include "db/drObj/drVia.h"
 
 #include <iostream>
 
@@ -50,12 +53,13 @@ int BATCHSIZETA = 8;
 int MTSAFEDIST = 2000;
 int DRCSAFEDIST = 500;
 int VERBOSE = 1;
+std::string BOTTOM_ROUTING_LAYER_NAME;
+std::string TOP_ROUTING_LAYER_NAME;
 int BOTTOM_ROUTING_LAYER = 2;
 int TOP_ROUTING_LAYER = std::numeric_limits<frLayerNum>::max();
 bool ALLOW_PIN_AS_FEEDTHROUGH = false;
 bool USENONPREFTRACKS = true;
 bool USEMINSPACING_OBS = true;
-bool RESERVE_VIA_ACCESS = true;
 bool ENABLE_BOUNDARY_MAR_FIX = true;
 bool ENABLE_VIA_GEN = true;
 
@@ -64,18 +68,6 @@ frLayerNum VIAINPIN_TOPLAYERNUM = std::numeric_limits<frLayerNum>::max();
 int MINNUMACCESSPOINT_MACROCELLPIN = 3;
 int MINNUMACCESSPOINT_STDCELLPIN = 3;
 int ACCESS_PATTERN_END_ITERATION_NUM = 5;
-
-frLayerNum ONGRIDONLY_WIRE_PREF_BOTTOMLAYERNUM
-    = std::numeric_limits<frLayerNum>::max();
-frLayerNum ONGRIDONLY_WIRE_PREF_TOPLAYERNUM
-    = std::numeric_limits<frLayerNum>::min();
-frLayerNum ONGRIDONLY_WIRE_NONPREF_BOTTOMLAYERNUM
-    = std::numeric_limits<frLayerNum>::max();
-frLayerNum ONGRIDONLY_WIRE_NONPREF_TOPLAYERNUM
-    = std::numeric_limits<frLayerNum>::min();
-frLayerNum ONGRIDONLY_VIA_BOTTOMLAYERNUM
-    = std::numeric_limits<frLayerNum>::max();
-frLayerNum ONGRIDONLY_VIA_TOPLAYERNUM = std::numeric_limits<frLayerNum>::min();
 
 frLayerNum VIA_ACCESS_LAYERNUM = 2;
 
@@ -93,13 +85,13 @@ float TASHAPEBLOATWIDTH = 1.5;
 frUInt4 VIACOST = 4;
 // new cost used
 frUInt4 GRIDCOST = 2;
-frUInt4 SHAPECOST = 8;
-frUInt4 DRCCOST = 8;
+frUInt4 FIXEDSHAPECOST = 30;
+frUInt4 ROUTESHAPECOST = 8;
 frUInt4 MARKERCOST = 32;
 frUInt4 MARKERBLOATWIDTH = 1;
 frUInt4 BLOCKCOST = 32;
 frUInt4 GUIDECOST = 1;  // disabled change getNextPathCost to enable
-float MARKERDECAY = 0.8;
+float MARKERDECAY = 0.95;
 float SHAPEBLOATWIDTH = 3;
 int MISALIGNMENTCOST = 8;
 
@@ -260,6 +252,93 @@ ostream& operator<<(ostream& os, const frBox& box)
 {
   os << "( " << box.left() << " " << box.bottom() << " ) ( " << box.right()
      << " " << box.top() << " )";
+  return os;
+}
+
+ostream& operator<<(ostream& os, const drConnFig& fig)
+{
+    switch (fig.typeId()) {
+        case drcPathSeg: {
+            auto p = static_cast<const drPathSeg*>(&fig);
+            os << "drPathSeg: begin ("  << p->getBeginX() << " " << p->getBeginY() << " ) end ( " << p->getEndX()
+            << " " << p->getEndY() << " )";
+            break;
+        }
+        case drcVia: {
+            auto p = static_cast<const drVia*>(&fig);
+            os << "drVia: at "  << p->getOrigin() << "\nVIA DEF:\n" << *p->getViaDef();
+            break;
+        }
+        case drcPatchWire: {
+            auto p = static_cast<const drPatchWire*>(&fig);
+            frBox b;
+            p->getBBox(b);
+            os << "drPatchWire: " << b;
+            break;
+        }
+        default:
+            os << "UNKNOWN drConnFig, code " << fig.typeId();
+    }
+  
+  return os;
+}
+
+ostream& operator<<(ostream& os, const frPathSeg& p)
+{
+  os << "frPathSeg: begin (" << p.getBeginPoint().x() << " "
+     << p.getBeginPoint().y() << " ) end ( " << p.getEndPoint().x() << " "
+     << p.getEndPoint().y() << " )";
+  return os;
+}
+
+
+ostream& operator<<(ostream& os, const frGuide& p)
+{
+  os << "frGuide: begin " << p.getBeginPoint() << " end " << p.getEndPoint()
+     << " begin LayerNum " << p.getBeginLayerNum() << " end layerNum "
+     << p.getEndLayerNum();
+  return os;
+}
+
+ostream& operator<<(ostream& os, const frConnFig& fig)
+{
+  switch (fig.typeId()) {
+    case frcPathSeg: {
+      auto p = static_cast<const frPathSeg*>(&fig);
+      os << p;
+      break;
+    }
+    case frcVia: {
+      auto p = static_cast<const frVia*>(&fig);
+      os << "frVia: at " << p->getOrigin() << "\nVIA DEF:\n" << *p->getViaDef();
+      break;
+    }
+    case frcPatchWire: {
+      auto p = static_cast<const frPatchWire*>(&fig);
+      frBox b;
+      p->getBBox(b);
+      os << "frPatchWire: " << b;
+      break;
+    }
+    case frcGuide: {
+      auto p = static_cast<const frGuide*>(&fig);
+      os << p;
+      break;
+    }
+    case frcRect: {
+      auto p = static_cast<const frRect*>(&fig);
+      frBox b;
+      p->getBBox(b);
+      os << "frRect: " << b;
+      break;
+    }
+    case frcPolygon: {
+      os << "frPolygon";
+      break;
+    }
+    default:
+      os << "UNKNOWN frShape, code " << fig.typeId();
+  }
   return os;
 }
 

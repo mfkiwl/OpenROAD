@@ -50,7 +50,6 @@ void FlexDRWorker::endRemoveNets_pathSeg(
     frPathSeg* pathSeg,
     set<pair<frPoint, frLayerNum>>& boundPts)
 {
-  bool enableOutput = false;
   frPoint begin, end;
   pathSeg->getPoints(begin, end);
   auto routeBox = getRouteBox();
@@ -66,11 +65,15 @@ void FlexDRWorker::endRemoveNets_pathSeg(
     // |                 |
     // |                 |
     // -------------------
-    bool condition1
-        = isInitDR() ? (begin.x() < routeBox.right())
-                     : (begin.x() <= routeBox.right());  // parallel to wire
-    bool condition2 = (begin.y() <= routeBox.top());     // orthogonal to wire
-    if (routeBox.left() <= begin.x() && condition1
+    if (isInitDR()
+        && (begin.x() == routeBox.left() || begin.x() == routeBox.right())) {
+      if (begin.y() < routeBox.bottom() || end.y() > routeBox.top()
+          || pathSeg->getBeginStyle() != frcTruncateEndStyle
+          || pathSeg->getEndStyle() != frcTruncateEndStyle)
+        return;
+    }
+    bool condition2 = (begin.y() <= routeBox.top());  // orthogonal to wire
+    if (routeBox.left() <= begin.x() && begin.x() <= routeBox.right()
         && !(begin.y() > routeBox.top() || end.y() < routeBox.bottom())) {
       // bottom seg to ext
       if (begin.y() < routeBox.bottom()) {
@@ -96,9 +99,6 @@ void FlexDRWorker::endRemoveNets_pathSeg(
         // only insert true boundary point
         if (end.y() >= routeBox.bottom()) {
           boundPts.insert(make_pair(boundPt, lNum));
-        }
-        if (enableOutput) {
-          cout << "trim pathseg to ext bottom" << endl;
         }
       }
       // top seg to ext
@@ -127,9 +127,6 @@ void FlexDRWorker::endRemoveNets_pathSeg(
         if (condition2) {
           boundPts.insert(make_pair(boundPt, lNum));
         }
-        if (enableOutput) {
-          cout << "trim pathseg to ext top" << endl;
-        }
       }
       // std::cout << "  removingPathSeg " << &(*pathSeg) << " (" << begin.x()
       // << ", " << begin.y()
@@ -140,13 +137,17 @@ void FlexDRWorker::endRemoveNets_pathSeg(
     }
     // horizontal seg
   } else if (begin.y() == end.y()) {
+    if (isInitDR()
+        && (begin.y() == routeBox.bottom() || begin.y() == routeBox.top())) {
+      if (begin.x() < routeBox.left() || end.x() > routeBox.right()
+          || pathSeg->getBeginStyle() != frcTruncateEndStyle
+          || pathSeg->getEndStyle() != frcTruncateEndStyle)
+        return;
+    }
     // if cross routeBBox
-    bool condition1 = isInitDR()
-                          ? (begin.y() < routeBox.top())
-                          : (begin.y() <= routeBox.top());  // parallel to wire
     bool condition2 = /*isInitDR() ? (begin.x() < routeBox.right()):*/ (
         begin.x() <= routeBox.right());  // orthogonal to wire
-    if (routeBox.bottom() <= begin.y() && condition1
+    if (routeBox.bottom() <= begin.y() && begin.y() <= routeBox.top()
         && !(begin.x() > routeBox.right() || end.x() < routeBox.left())) {
       // left seg to ext
       if (begin.x() < routeBox.left()) {
@@ -172,9 +173,6 @@ void FlexDRWorker::endRemoveNets_pathSeg(
         // only insert true boundary point
         if (end.x() >= routeBox.left()) {
           boundPts.insert(make_pair(boundPt, lNum));
-        }
-        if (enableOutput) {
-          cout << "trim pathseg to ext left" << endl;
         }
       }
       // right seg to ext
@@ -203,9 +201,6 @@ void FlexDRWorker::endRemoveNets_pathSeg(
         if (condition2) {
           boundPts.insert(make_pair(boundPt, lNum));
         }
-        if (enableOutput) {
-          cout << "trim pathseg to ext right" << endl;
-        }
       }
       regionQuery->removeDRObj(pathSeg);  // delete rq
       net->removeShape(pathSeg);          // delete segment
@@ -215,47 +210,40 @@ void FlexDRWorker::endRemoveNets_pathSeg(
 
 void FlexDRWorker::endRemoveNets_via(frVia* via)
 {
-  // bool enableOutput = true;
-  bool enableOutput = false;
   auto gridBBox = getRouteBox();
   auto regionQuery = getRegionQuery();
   auto net = via->getNet();
   frPoint viaPoint;
   via->getOrigin(viaPoint);
-  bool condition1 = isInitDR() ? (viaPoint.x() < gridBBox.right()
-                                  && viaPoint.y() < gridBBox.top())
-                               : (viaPoint.x() <= gridBBox.right()
-                                  && viaPoint.y() <= gridBBox.top());
+  if (isInitDR()
+      && (viaPoint.x() == gridBBox.left() || viaPoint.x() == gridBBox.right()
+          || viaPoint.y() == gridBBox.bottom()
+          || viaPoint.y() == gridBBox.top())) {
+    return;
+  }
   if (viaPoint.x() >= gridBBox.left() && viaPoint.y() >= gridBBox.bottom()
-      && condition1) {
+      && viaPoint.x() <= gridBBox.right() && viaPoint.y() <= gridBBox.top()) {
     regionQuery->removeDRObj(via);  // delete rq
     net->removeVia(via);
-    if (enableOutput) {
-      cout << "delete via in route" << endl;
-    }
   }
 }
 
 void FlexDRWorker::endRemoveNets_patchWire(frPatchWire* pwire)
 {
-  // bool enableOutput = true;
-  bool enableOutput = false;
   auto gridBBox = getRouteBox();
   auto regionQuery = getRegionQuery();
   auto net = pwire->getNet();
   frPoint origin;
   pwire->getOrigin(origin);
-  bool condition1
-      = isInitDR()
-            ? (origin.x() < gridBBox.right() && origin.y() < gridBBox.top())
-            : (origin.x() <= gridBBox.right() && origin.y() <= gridBBox.top());
+  if (isInitDR()
+      && (origin.x() == gridBBox.left() || origin.x() == gridBBox.right()
+          || origin.y() == gridBBox.bottom() || origin.y() == gridBBox.top())) {
+    return;
+  }
   if (origin.x() >= gridBBox.left() && origin.y() >= gridBBox.bottom()
-      && condition1) {
+      && origin.x() <= gridBBox.right() && origin.y() <= gridBBox.top()) {
     regionQuery->removeDRObj(pwire);  // delete rq
     net->removePatchWire(pwire);
-    if (enableOutput) {
-      cout << "delete pwire in route" << endl;
-    }
   }
 }
 
@@ -356,7 +344,7 @@ void FlexDRWorker::endAddNets_merge(frNet* net,
       }
     }
     // always merge offGrid boundary points
-    frCoord manuGrid = getDesign()->getTech()->getManufacturingGrid();
+    frCoord manuGrid = getTech()->getManufacturingGrid();
     if (pt.x() % manuGrid || pt.y() % manuGrid) {
       skip = false;
     }
@@ -377,14 +365,12 @@ void FlexDRWorker::endAddNets_merge(frNet* net,
         }
         frPoint bp, ep;
         ps->getPoints(bp, ep);
-        if (bp == pt || ep == pt) {
-          // vertical
-          if (bp.x() == ep.x()) {
-            vertPathSegs.push_back(ps);
-            // horizontal
-          } else {
-            horzPathSegs.push_back(ps);
-          }
+        // vertical
+        if (bp.x() == ep.x()) {
+          vertPathSegs.push_back(ps);
+          // horizontal
+        } else {
+          horzPathSegs.push_back(ps);
         }
       } else if (obj->typeId() == frcPatchWire) {
         auto pwire = static_cast<frPatchWire*>(obj);
@@ -464,16 +450,10 @@ void FlexDRWorker::endAddNets_merge(frNet* net,
 void FlexDRWorker::endAddNets(
     map<frNet*, set<pair<frPoint, frLayerNum>>, frBlockObjectComp>& boundPts)
 {
-  // bool enableOutput = true;
   for (auto& net : nets_) {
     if (!net->isModified()) {
       continue;
     }
-    // if (enableOutput) {
-    //   if (net->getFrNet()->getName() == string("net30")) {
-    //     cout <<"write back net@@@" <<endl;
-    //   }
-    // }
     // double dbu = getDesign()->getTopBlock()->getDBUPerUU();
     // if (getDRIter() == 2 &&
     //     getRouteBox().left()    == 63     * dbu &&
@@ -542,7 +522,6 @@ void FlexDRWorker::cleanup()
     net->cleanup();
   }
   owner2nets_.clear();
-  owner2pins_.clear();
   gridGraph_.cleanup();
   markers_.clear();
   markers_.shrink_to_fit();
@@ -556,16 +535,14 @@ void FlexDRWorker::end()
   }
   // skip if current clip does not have input DRCs
   // ripupMode = 0 must have enableDRC = true in previous iteration
-  if (isEnableDRC() && getDRIter() && getInitNumMarkers() == 0
-      && !needRecheck_) {
+  if (getDRIter() && getInitNumMarkers() == 0 && !needRecheck_) {
     return;
     // do not write back if current clip is worse than input
-  } else if (isEnableDRC() && getRipupMode() == 0
-             && getBestNumMarkers() > getInitNumMarkers()) {
+  } else if (getRipupMode() == 0 && getBestNumMarkers() > getInitNumMarkers()) {
     // cout <<"skip clip with #init/final = " <<getInitNumMarkers() <<"/"
     // <<getNumMarkers() <<endl;
     return;
-  } else if (isEnableDRC() && getDRIter() && getRipupMode() == 1
+  } else if (getDRIter() && getRipupMode() == 1
              && getBestNumMarkers() > 5 * getInitNumMarkers()) {
     return;
   }
@@ -577,18 +554,7 @@ void FlexDRWorker::end()
   endRemoveNets(modNets, boundPts);
   endAddNets(boundPts);  // if two subnets have diff isModified() status, then
                          // should always write back
-  if (isEnableDRC()) {
-    endRemoveMarkers();
-    endAddMarkers();
-  }
+  endRemoveMarkers();
+  endAddMarkers();
   // release lock
-}
-
-int FlexDRWorker::getNumQuickMarkers()
-{
-  int totNum = 0;
-  for (auto& net : nets_) {
-    totNum += net->getNumMarkers();
-  }
-  return totNum;
 }

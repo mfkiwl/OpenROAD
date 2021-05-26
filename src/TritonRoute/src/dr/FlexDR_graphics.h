@@ -45,6 +45,7 @@ class FlexWavefrontGrid;
 class FlexDRWorker;
 class drNet;
 class frDesign;
+class frBlockObject;
 
 // This class draws debugging graphics on the layout
 class FlexDRGraphics : public gui::Renderer
@@ -78,9 +79,15 @@ class FlexDRGraphics : public gui::Renderer
   // Is the GUI being displayed (true) or are we in batch mode (false)
   static bool guiActive();
 
+  static void init();
+
   void update();
 
   void pause(drNet* net);
+
+  void debugWholeDesign();
+
+  void drawObj(frBlockObject* fig, gui::Painter& painter, int layerNum);
 
  private:
   FlexDRWorker* worker_;
@@ -91,6 +98,8 @@ class FlexDRGraphics : public gui::Renderer
   frLayerNum last_pt_layer_;
   gui::Gui* gui_;
   Logger* logger_;
+  int dbu_per_uu_;
+  bool drawWholeDesign_ = false;
   // maps odb layerIdx -> tr layerIdx, with -1 for no equivalent
   std::vector<frLayerNum> layer_map_;
   std::vector<std::vector<frPoint>> points_by_layer_;
@@ -99,9 +108,11 @@ class FlexDRGraphics : public gui::Renderer
   static const char* grid_graph_visible_;
   static const char* route_guides_visible_;
   static const char* routing_objs_visible_;
-  static const char* drc_cost_visible_;
+  static const char* route_shape_cost_visible_;
   static const char* marker_cost_visible_;
-  static const char* shape_cost_visible_;
+  static const char* fixed_shape_cost_visible_;
+
+  void drawMarker(int xl, int yl, int xh, int yh, gui::Painter& painter);
 };
 
 }  // namespace fr

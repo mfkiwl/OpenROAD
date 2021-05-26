@@ -35,17 +35,20 @@
 #include <string.h>
 #include <tcl.h>
 
+#include <any>
 #include <array>
 #include <initializer_list>
 #include <set>
 #include <string>
 #include <tuple>
+#include <typeinfo>
 #include <variant>
 
 #include "opendb/db.h"
 
 namespace gui {
 class Painter;
+class Selected;
 
 // This interface allows the GUI to interact with selected objects of
 // types it knows nothing about.  It can just ask the descriptor to
@@ -54,62 +57,46 @@ class Painter;
 class Descriptor
 {
  public:
-  virtual std::string getName(void* object) const = 0;
-  virtual std::string getLocation(void* object) const = 0;
-  virtual bool getBBox(void* object, odb::Rect& bbox) const = 0;
+  virtual std::string getName(std::any object) const = 0;
+  virtual std::string getTypeName(std::any object) const = 0;
+  virtual bool getBBox(std::any object, odb::Rect& bbox) const = 0;
 
-  // If the select_flag is false, the drawing will happen in highlight mode.
-  // Highlight shapes are persistent which will not get removed from
-  // highlightSet, if the user clicks on layout view as in case of selectionSet
-  virtual void highlight(void* object,
+  virtual bool isInst(std::any /* object */) const { return false; }
+  virtual bool isNet(std::any /* object */) const { return false; }
+
+  // A property is a name and a value.
+  using Property = std::pair<std::string, std::any>;
+  using Properties = std::vector<Property>;
+
+  virtual Properties getProperties(std::any object) const = 0;
+
+  virtual Selected makeSelected(std::any object,
+                                void* additional_data) const = 0;
+
+  virtual bool lessThan(std::any l, std::any r) const = 0;
+
+protected:
+  // The caller (Selected) will pre-configure the Painter's pen
+  // and brush before calling.
+  virtual void highlight(std::any object,
                          Painter& painter,
-                         bool select_flag = true,
-                         int highlight_group = 0,
                          void* additional_data = nullptr) const = 0;
 
-  virtual bool isInst(void* object) const = 0;
-  virtual bool isNet(void* object) const = 0;
+  friend class Selected;
 };
 
-// An implementation of the Descriptor interface for OpenDB
-// objects for client convenience.
-class OpenDbDescriptor : public Descriptor
-{
- public:
-  std::string getName(void* object) const override;
-  std::string getLocation(void* object) const override;
-  bool getBBox(void* object, odb::Rect& bbox) const override;
-
-  void highlight(void* object,
-                 Painter& painter,
-                 bool select_flag,
-                 int highlight_group,
-                 void* additional_data) const override;
-
-  bool isInst(void* object) const override;
-  bool isNet(void* object) const override;
-
-  static OpenDbDescriptor* get();
-
- private:
-  OpenDbDescriptor() = default;
-  static OpenDbDescriptor* singleton_;
-};
-
-// An object selected in the gui.  The objects is stored as a
-// void* to allow any client objects to be stored.  The descriptor
+// An object selected in the gui.  The object is stored as a
+// std::any to allow any client objects to be stored.  The descriptor
 // is the API for the object as described above.  This doesn't
 // require the client object to use inheritance from an interface.
 class Selected
 {
  public:
   // Null case
-  Selected() : object_(nullptr), additional_data_(nullptr), descriptor_(nullptr)
-  {
-  }
+  Selected() : additional_data_(nullptr), descriptor_(nullptr) {}
 
-  Selected(void* object,
-           Descriptor* descriptor,
+  Selected(std::any object,
+           const Descriptor* descriptor,
            void* additional_data = nullptr)
       : object_(object),
         additional_data_(additional_data),
@@ -117,15 +104,8 @@ class Selected
   {
   }
 
-  Selected(odb::dbObject* object, odb::dbObject* sink_object = nullptr)
-      : object_(object),
-        additional_data_(sink_object),
-        descriptor_(OpenDbDescriptor::get())
-  {
-  }
-
   std::string getName() const { return descriptor_->getName(object_); }
-  std::string getLocation() const { return descriptor_->getLocation(object_); }
+  std::string getTypeName() const { return descriptor_->getTypeName(object_); }
   bool getBBox(odb::Rect& bbox) const
   {
     return descriptor_->getBBox(object_, bbox);
@@ -133,29 +113,38 @@ class Selected
 
   bool isInst() const { return descriptor_->isInst(object_); }
   bool isNet() const { return descriptor_->isNet(object_); }
-  void* getObject() const { return object_; }
+  std::any getObject() const { return object_; }
 
+  // If the select_flag is false, the drawing will happen in highlight mode.
+  // Highlight shapes are persistent which will not get removed from
+  // highlightSet, if the user clicks on layout view as in case of selectionSet
   void highlight(Painter& painter,
                  bool select_flag = true,
-                 int highlight_group = 0) const
+                 int highlight_group = 0) const;
+
+  Descriptor::Properties getProperties() const
   {
-    return descriptor_->highlight(
-        object_, painter, select_flag, highlight_group, additional_data_);
+    return descriptor_->getProperties(object_);
   }
 
-  operator bool() const { return object_ != nullptr; }
+  operator bool() const { return object_.has_value(); }
 
   // For SelectionSet
   friend bool operator<(const Selected& l, const Selected& r)
   {
-    return l.object_ < r.object_;
+    auto& l_type_info = l.object_.type();
+    auto& r_type_info = r.object_.type();
+    if (l_type_info == r_type_info) {
+      return l.descriptor_->lessThan(l.object_, r.object_);
+    }
+    return l_type_info.before(r_type_info);
   }
 
  private:
-  void* object_;
+  std::any object_;
   void* additional_data_;  // Will only be required for highlighting input nets,
                            // in which case it will store the input instTerm
-  Descriptor* descriptor_;
+  const Descriptor* descriptor_;
 };
 
 // A collection of selected objects
@@ -218,6 +207,9 @@ class Painter
   static inline const Color ruler_color = cyan;
 
   virtual ~Painter() = default;
+
+  // Get the current pen color
+  virtual Color getPenColor() = 0;
 
   // Set the pen to whatever the user has chosen for this layer
   virtual void setPen(odb::dbTechLayer* layer, bool cosmetic = false) = 0;
@@ -301,6 +293,13 @@ class Gui
   void registerRenderer(Renderer* renderer);
   void unregisterRenderer(Renderer* renderer);
 
+  // Make a Selected any object in the gui.  It should have a descriptor
+  // registered for its exact type to be useful.
+  Selected makeSelected(std::any object, void* additional_data = nullptr);
+
+  // Set the current selected object in the gui.
+  void setSelected(Selected selection);
+
   // Add a net to the selection set
   void addSelectedNet(const char* name);
 
@@ -361,11 +360,26 @@ class Gui
 
   const std::set<Renderer*>& renderers() { return renderers_; }
 
+  // The GUI listening for callbacks on read_def or read_db but
+  // if the design is created by direct opendb calls then this
+  // will trigger the GUI to load it.
+  void load_design();
+
+  void fit();
+
+  template <class T>
+  void registerDescriptor(const Descriptor* descriptor)
+  {
+    registerDescriptor(typeid(T), descriptor);
+  }
+
   // Will return nullptr if openroad was invoked without -gui
   static Gui* get();
 
  private:
   Gui() = default;
+  void registerDescriptor(const std::type_info& type,
+                          const Descriptor* descriptor);
 
   std::set<Renderer*> renderers_;
   static Gui* singleton_;

@@ -31,14 +31,13 @@
 // POSSIBILITY OF SUCH DAMAGE.
 
 // Generator Code Begin Cpp
-#include "dbTechLayer.h"
-
 #include "db.h"
 #include "dbDatabase.h"
 #include "dbDiff.hpp"
 #include "dbSet.h"
 #include "dbTable.h"
 #include "dbTable.hpp"
+#include "dbTechLayer.h"
 #include "dbTechLayerCornerSpacingRule.h"
 #include "dbTechLayerCutClassRule.h"
 #include "dbTechLayerCutEnclosureRule.h"
@@ -55,6 +54,7 @@
 #include "dbTechLayerSpacingRule.h"
 #include "dbTechMinCutOrAreaRule.h"
 #include "lefout.h"
+#include "utl/Logger.h"
 // User Code End Includes
 namespace odb {
 
@@ -62,6 +62,9 @@ template class dbTable<_dbTechLayer>;
 
 bool _dbTechLayer::operator==(const _dbTechLayer& rhs) const
 {
+  if (flags_.num_masks_ != rhs.flags_.num_masks_)
+    return false;
+
   if (flags_.has_max_width_ != rhs.flags_.has_max_width_)
     return false;
 
@@ -276,6 +279,7 @@ void _dbTechLayer::differences(dbDiff& diff,
 {
   DIFF_BEGIN
 
+  DIFF_FIELD(flags_.num_masks_);
   DIFF_FIELD(flags_.has_max_width_);
   DIFF_FIELD(flags_.has_thickness_);
   DIFF_FIELD(flags_.has_area_);
@@ -345,6 +349,7 @@ void _dbTechLayer::differences(dbDiff& diff,
 void _dbTechLayer::out(dbDiff& diff, char side, const char* field) const
 {
   DIFF_OUT_BEGIN
+  DIFF_OUT_FIELD(flags_.num_masks_);
   DIFF_OUT_FIELD(flags_.has_max_width_);
   DIFF_OUT_FIELD(flags_.has_thickness_);
   DIFF_OUT_FIELD(flags_.has_area_);
@@ -476,6 +481,7 @@ _dbTechLayer::_dbTechLayer(_dbDatabase* db)
   flags_.type_ = dbTechLayerType::ROUTING;
   flags_.direction_ = dbTechLayerDir::NONE;
   flags_.minstep_type_ = dbTechLayerMinStepType();
+  flags_.num_masks_ = 1;
   _pitch_x = 0;
   _pitch_y = 0;
   _offset_x = 0;
@@ -541,6 +547,7 @@ _dbTechLayer::_dbTechLayer(_dbDatabase* db)
 }
 _dbTechLayer::_dbTechLayer(_dbDatabase* db, const _dbTechLayer& r)
 {
+  flags_.num_masks_ = r.flags_.num_masks_;
   flags_.has_max_width_ = r.flags_.has_max_width_;
   flags_.has_thickness_ = r.flags_.has_thickness_;
   flags_.has_area_ = r.flags_.has_area_;
@@ -829,6 +836,28 @@ _dbTechLayer::~_dbTechLayer()
 }
 
 // User Code Begin PrivateMethods
+uint _dbTechLayer::getV55RowIdx(const int& rowVal) const
+{
+  auto pos = --(std::lower_bound(_v55sp_width_idx.begin(), _v55sp_width_idx.end(), rowVal));
+  return std::max(0, (int) std::distance(_v55sp_width_idx.begin(), pos));
+}
+uint _dbTechLayer::getV55ColIdx(const int& colVal) const
+{
+  auto pos = --(std::lower_bound(_v55sp_length_idx.begin(), _v55sp_length_idx.end(), colVal));
+  return std::max(0, (int) std::distance(_v55sp_length_idx.begin(), pos));
+}
+uint _dbTechLayer::getTwIdx(const int width, const int prl) const
+{
+  int sz = _two_widths_sp_idx.size();
+  for(int i = 0; i < sz ; i++)
+  {
+    if(width <= _two_widths_sp_idx[i])
+      return std::max(0, i-1);
+    if(_two_widths_sp_prl[i] != -1 && prl <= _two_widths_sp_prl[i])
+      return std::max(0, i-1);
+  }
+  return sz-1;
+}
 // User Code End PrivateMethods
 
 ////////////////////////////////////////////////////////////////////
@@ -1270,6 +1299,15 @@ bool dbTechLayer::getV55SpacingTable(
   return true;
 }
 
+int dbTechLayer::findV55Spacing(const int width, const int prl) const {
+  if(!hasV55SpacingRules())
+    return 0;
+  _dbTechLayer* layer = (_dbTechLayer*) this;
+  uint rowIdx = layer->getV55RowIdx(width);
+  uint colIdx = layer->getV55ColIdx(prl);
+  return layer->_v55sp_spacing(rowIdx, colIdx);
+}
+
 void dbTechLayer::initV55LengthIndex(uint numelems)
 {
   _dbTechLayer* layer = (_dbTechLayer*) this;
@@ -1426,6 +1464,15 @@ void dbTechLayer::addTwoWidthsSpacingTableEntry(uint inrow,
   layer->_two_widths_sp_spacing(inrow, incol) = spacing;
 }
 
+int dbTechLayer::findTwSpacing(const int width1, const int width2, const int prl) const{
+  if(!hasTwoWidthsSpacingRules())
+    return 0;
+  _dbTechLayer* layer = (_dbTechLayer*) this;
+  auto rowIdx = layer->getTwIdx(width1, prl);
+  auto colIdx = layer->getTwIdx(width2, prl);
+  return layer->_two_widths_sp_spacing(rowIdx, colIdx);
+}
+
 bool dbTechLayer::getMinimumCutRules(std::vector<dbTechMinCutRule*>& cut_rules)
 {
   cut_rules.clear();
@@ -1575,6 +1622,22 @@ void dbTechLayer::writeAntennaRulesLef(lefout& writer) const
     fprintf(writer.out(), "    ANTENNAMODEL OXIDE2 ;\n");
   if (hasOxide2AntennaRule())
     getOxide2AntennaRule()->writeLef(writer);
+}
+
+uint dbTechLayer::getNumMasks() const
+{
+  _dbTechLayer* layer = (_dbTechLayer*) this;
+  return layer->flags_.num_masks_;
+}
+
+void dbTechLayer::setNumMasks(uint number)
+{
+  _dbTechLayer* layer = (_dbTechLayer*) this;
+  if (number < 1 || number > 3) {
+    getImpl()->getLogger()->error(
+        utl::ODB, 271, "setNumMask {} not in range [1,3]", number);
+  }
+  layer->flags_.num_masks_ = number;
 }
 
 bool dbTechLayer::getThickness(uint& inthk) const

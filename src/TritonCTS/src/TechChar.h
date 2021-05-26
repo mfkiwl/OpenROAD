@@ -37,7 +37,7 @@
 
 #include "CtsOptions.h"
 #include "db_sta/dbNetwork.hh"
-#include "openroad/OpenRoad.hh"
+#include "ord/OpenRoad.hh"
 #include "sta/Corner.hh"
 
 #include <algorithm>
@@ -181,7 +181,7 @@ class TechChar
   };
 
  public:
-  TechChar(CtsOptions* options, Logger* logger) : _options(options), _logger(logger) {}
+  TechChar(CtsOptions* options, Logger* logger) : _logger(logger), _options(options) {}
 
   void create();
   void compileLut(std::vector<ResultData> lutSols);

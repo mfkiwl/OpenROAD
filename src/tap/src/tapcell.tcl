@@ -71,10 +71,6 @@ proc tapcell { args } {
     set tapcell_master $keys(-tapcell_master)
   }
 
-  if { [info exists keys(-endcap_master)] } {
-    set endcap_master_name $keys(-endcap_master)
-  }
-
   if { [info exists keys(-endcap_cpp)] } {
     utl::warn TAP 14 "endcap_cpp option is deprecated."
   }
@@ -186,9 +182,13 @@ proc tapcell { args } {
   set halo_y [ord::microns_to_dbu $halo_y]
   set halo_x [ord::microns_to_dbu $halo_x]
 
-  set endcap_master [$db findMaster $endcap_master_name]
-  if { $endcap_master == "NULL" } {
-    utl::error TAP 10 "Master $endcap_master_name not found."
+  set endcap_master "NULL"
+  if { [info exists keys(-endcap_master)] } {
+    set endcap_master_name $keys(-endcap_master)
+    set endcap_master [$db findMaster $endcap_master_name]
+    if { $endcap_master == "NULL" } {
+      utl::error TAP 10 "Master $endcap_master_name not found."
+    }
   }
 
   tap::clear $tap_prefix $endcap_prefix
@@ -202,7 +202,9 @@ proc tapcell { args } {
 
   set tap::phy_idx 0
   set tap::filled_sites []
-  tap::insert_endcaps $db $rows $endcap_master $cnrcap_masters $endcap_prefix
+  if { [info exists keys(-endcap_master)] } {
+    tap::insert_endcaps $db $rows $endcap_master $cnrcap_masters $endcap_prefix
+  }
 
   if {$add_boundary_cell} {
     set tap_nw_masters {}
@@ -274,8 +276,12 @@ proc cut_rows {db endcap_master blockages halo_x halo_y} {
   set rows_count [llength [$block getRows]]
   set block_count [llength $blockages]
 
-  set end_width [$endcap_master getWidth]
-  set min_row_width [expr 2*$end_width]
+  if {$endcap_master != "NULL"} {
+    set end_width [$endcap_master getWidth]
+    set min_row_width [expr 2*$end_width]
+  } else {
+    set min_row_width 0
+  }
 
   # Gather rows needing to be cut up front
   set blocked_rows []
@@ -666,7 +672,7 @@ proc insert_at_top_bottom {db rows masters endcap_master prefix} {
       set x_start [expr $llx+$endcapwidth]
       set x_end [expr $urx-$endcapwidth]
 
-      insert_at_top_bottom_helper $block $cur_row $ori $x_start $x_end $lly $tap_nwintie_master $tap_nwin2_master $tap_nwin3_master $tap_nwouttie_master $tap_nwout2_master $tap_nwout3_master $prefix
+      insert_at_top_bottom_helper $block $cur_row 0 $ori $x_start $x_end $lly $tap_nwintie_master $tap_nwin2_master $tap_nwin3_master $tap_nwouttie_master $tap_nwout2_master $tap_nwout3_master $prefix
     }
   }
   set topbottom_cnt [expr $phy_idx - $start_phy_idx]
@@ -674,10 +680,11 @@ proc insert_at_top_bottom {db rows masters endcap_master prefix} {
   return $topbottom_cnt
 }
 
-proc insert_at_top_bottom_helper {block top_bottom ori x_start x_end lly tap_nwintie_master tap_nwin2_master tap_nwin3_master tap_nwouttie_master tap_nwout2_master tap_nwout3_master prefix} {
+proc insert_at_top_bottom_helper {block top_bottom is_macro ori x_start x_end lly tap_nwintie_master tap_nwin2_master tap_nwin3_master tap_nwouttie_master tap_nwout2_master tap_nwout3_master prefix} {
   if {$top_bottom == 1} {
     # top
-    if { $ori == "MX" } {
+    if {($ori == "R0" && $is_macro) || \
+        ($ori == "MX" && !$is_macro)} {
       set master $tap_nwintie_master
       set tb2_master $tap_nwin2_master
       set tb3_master $tap_nwin3_master
@@ -688,7 +695,8 @@ proc insert_at_top_bottom_helper {block top_bottom ori x_start x_end lly tap_nwi
     }
   } else {
     # bottom
-    if { $ori == "R0" } {
+    if {($ori == "MX" && $is_macro) || \
+        ($ori == "R0" && !$is_macro)} {
       set master $tap_nwintie_master
       set tb2_master $tap_nwin2_master
       set tb3_master $tap_nwin3_master
@@ -700,31 +708,38 @@ proc insert_at_top_bottom_helper {block top_bottom ori x_start x_end lly tap_nwi
   }
 
   set tbtiewidth [$master getWidth]
+  set tap3_master_width [$tb3_master getWidth]
+  set tap2_master_width [$tb2_master getWidth]
+  
+  set tbtiecount [expr int(floor(($x_end-$x_start) / $tbtiewidth))]
+  # ensure there is room at the end of the row for atleast one tb2, if needed
+  set remaining_distance [expr $x_end-$x_start - $tbtiecount*$tbtiewidth]
+  if {$remaining_distance != 0 && $remaining_distance < $tap2_master_width} {
+    incr tbtiecount -1
+  }
   #insert tb tie
-  for {set x $x_start} {$x+$tbtiewidth < $x_end} {set x [expr $x+$tbtiewidth]} {
+  set x $x_start
+  for {set n 0} {$n < $tbtiecount} {incr n} {
     build_cell $block $master $ori $x $lly $prefix
+    set x [expr $x+$tbtiewidth]
   }
 
   # fill remaining sites
-  set tap_nwout3_master_width [$tap_nwout3_master getWidth]
-  set tap_nwout2_master_width [$tap_nwout2_master getWidth]
-  
-  set x_end_tb3_test [expr ($x_end - $x) % $tap_nwout3_master_width]
-  if {$x_end_tb3_test == 0} {
-    set x_end_tb3 $x_end
-  } elseif {$x_end_tb3_test == $tap_nwout2_master_width} {
-    set x_end_tb3 [expr $x_end - $tap_nwout2_master_width]
-  } else {
-    set x_end_tb3 [expr $x_end - 2*$tap_nwout2_master_width]
+  set tb3tiecount [expr int(floor(($x_end-$x) / $tap3_master_width))]
+  set remaining_distance [expr $x_end-$x - $tb3tiecount*$tap3_master_width]
+  while {[expr $remaining_distance % $tap2_master_width] != 0 && $remaining_distance >= 0} {
+    incr tb3tiecount -1
+    set remaining_distance [expr $x_end-$x - $tb3tiecount*$tap3_master_width]
   }
-
+  
   # fill with 3s
-  for {} {$x < $x_end_tb3} {set x [expr $x+$tap_nwout3_master_width]} {
+  for {set n 0} {$n < $tb3tiecount} {incr n} {
     build_cell $block $tb3_master $ori $x $lly $prefix
+    set x [expr $x+$tap3_master_width]
   }
   
   # fill with 2s
-  for {} {$x < $x_end} {set x [expr $x+$tap_nwout2_master_width]} {
+  for {} {$x < $x_end} {set x [expr $x+$tap2_master_width]} {
     build_cell $block $tb2_master $ori $x $lly $prefix
   }
 }
@@ -803,7 +818,7 @@ proc insert_around_macros {db rows masters corner_master prefix} {
           set row_end [expr $row_end - $corner_cell_width]
         }
         # do top row
-        insert_at_top_bottom_helper $block 1 $top_row_ori $row_start $row_end $top_row_y $tap_nwintie_master $tap_nwin2_master $tap_nwin3_master $tap_nwouttie_master $tap_nwout2_master $tap_nwout3_master $prefix
+        insert_at_top_bottom_helper $block 1 1 $top_row_ori $row_start $row_end $top_row_y $tap_nwintie_master $tap_nwin2_master $tap_nwin3_master $tap_nwouttie_master $tap_nwout2_master $tap_nwout3_master $prefix
         
         # do corners
         if { $top_row_ori == "R0" } {
@@ -815,9 +830,9 @@ proc insert_around_macros {db rows masters corner_master prefix} {
         }
         
         # NE corner
-        build_cell $block $incnr_master $top_row_ori [expr $x_start - [$incnr_master getWidth]] $top_row_y $prefix
+        build_cell $block $incnr_master $top_row_ori $x_end $top_row_y $prefix
         # NW corner
-        build_cell $block $incnr_master $west_ori $x_end $top_row_y $prefix
+        build_cell $block $incnr_master $west_ori [expr $x_start - [$incnr_master getWidth]] $top_row_y $prefix
       }
       if {$bot_row >= 1} {
         set bot_row_inst [lindex $rows $bot_row 0]
@@ -836,7 +851,7 @@ proc insert_around_macros {db rows masters corner_master prefix} {
         }
         
         # do bottom row
-        insert_at_top_bottom_helper $block 0 $bot_row_ori $row_start $row_end $bot_row_y $tap_nwintie_master $tap_nwin2_master $tap_nwin3_master $tap_nwouttie_master $tap_nwout2_master $tap_nwout3_master $prefix
+        insert_at_top_bottom_helper $block 0 1 $bot_row_ori $row_start $row_end $bot_row_y $tap_nwintie_master $tap_nwin2_master $tap_nwin3_master $tap_nwouttie_master $tap_nwout2_master $tap_nwout3_master $prefix
         
         # do corners
         if { $bot_row_ori == "MX" } {
@@ -848,9 +863,9 @@ proc insert_around_macros {db rows masters corner_master prefix} {
         }
         
         # SE corner
-        build_cell $block $incnr_master $bot_row_ori [expr $x_start - [$incnr_master getWidth]] $bot_row_y $prefix
+        build_cell $block $incnr_master $bot_row_ori $x_end $bot_row_y $prefix
         # SW corner
-        build_cell $block $incnr_master $west_ori $x_end $bot_row_y $prefix
+        build_cell $block $incnr_master $west_ori [expr $x_start - [$incnr_master getWidth]] $bot_row_y $prefix
       }
     }
   }
@@ -971,7 +986,7 @@ proc find_blockages {db} {
   foreach inst [[[$db getChip] getBlock] getInsts] {
     if { [$inst isBlock] } {
       if { ![$inst isPlaced] } {
-        utl::warn 20 "Macro [$inst getName] is not placed"
+        utl::warn TAP 32 "Macro [$inst getName] is not placed"
         continue
       }
       lappend blockages $inst
@@ -1006,6 +1021,7 @@ proc build_cell {block master orientation x y prefix} {
   $inst setOrient $orientation
   $inst setLocation $x $y
   $inst setPlacementStatus LOCKED
+  $inst setSourceType DIST
 
   set inst_bb [$inst getBBox]
 

@@ -37,6 +37,7 @@
 #include <stdio.h>
 #include <tcl.h>
 #include <stdlib.h>
+#include <signal.h>
 #include <limits.h>
 #include <string>
 #include <libgen.h>
@@ -61,9 +62,9 @@
 
 #include "sta/StringUtil.hh"
 #include "sta/StaMain.hh"
-#include "openroad/Version.hh"
-#include "openroad/InitOpenRoad.hh"
-#include "openroad/OpenRoad.hh"
+#include "ord/Version.hh"
+#include "ord/InitOpenRoad.hh"
+#include "ord/OpenRoad.hh"
 #include "utl/Logger.h" 
 #include "gui/gui.h"
 
@@ -177,6 +178,10 @@ main(int argc,
   }
 
 #ifdef ENABLE_PYTHON3
+  // Capture the current SIGINT handler before python changes it.
+  struct sigaction orig_sigint_handler;
+  sigaction(SIGINT, NULL, &orig_sigint_handler);
+
   initPython();
 #endif
 
@@ -207,7 +212,12 @@ main(int argc,
     }
 
     return Py_Main(cmd_argc, args.data());
-  }
+  } else {
+    // Python wants to install its own SIGINT handler to print KeyboardInterrupt
+    // on ctrl-C. We don't want that if python is not the main interpreter.
+    // We restore the handler from before initPython.
+    sigaction(SIGINT, &orig_sigint_handler, NULL);
+  }  
 #endif
   // Set argc to 1 so Tcl_Main doesn't source any files.
   // Tcl_Main never returns.
@@ -271,6 +281,14 @@ tclAppInit(int argc,
   if (!findCmdLineFlag(argc, argv, "-no_splash"))
     showSplash();
 
+  const char* threads = findCmdLineKey(argc, argv, "-threads");
+  if (threads) {
+    ord::OpenRoad::openRoad()->setThreadCount(threads);
+  } else {
+    // set to default number of threads
+    ord::OpenRoad::openRoad()->setThreadCount(ord::OpenRoad::openRoad()->getThreadCount(), false);
+  }
+
   bool exit_after_cmd_file = findCmdLineFlag(argc, argv, "-exit");
 
   if (!findCmdLineFlag(argc, argv, "-no_init")) {
@@ -323,7 +341,7 @@ static void
 showUsage(const char *prog,
 	  const char *init_filename)
 {
-  printf("Usage: %s [-help] [-version] [-no_init] [-exit] [-gui] [-log file_name] cmd_file\n", prog);
+  printf("Usage: %s [-help] [-version] [-no_init] [-exit] [-gui] [-threads count|max] [-log file_name] cmd_file\n", prog);
   printf("  -help              show help and exit\n");
   printf("  -version           show version and exit\n");
   printf("  -no_init           do not read %s init file\n", init_filename);
